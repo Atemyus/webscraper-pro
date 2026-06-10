@@ -201,3 +201,14 @@ class ScraperApp:
             return None
         name = self.results_view.current_name or "scrape_result"
         return await self.service.export(result, name, fmt)
+
+    async def export_all_results(self) -> dict[str, str] | None:
+        result = self.results_view.current_result
+        if result is None:
+            return None
+        name = self.results_view.current_name or "scrape_result"
+        return await self.service.export_all(result, name)
+
+    @property
+    def output_dir(self) -> str:
+        return self.service.output_dir

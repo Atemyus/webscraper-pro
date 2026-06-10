@@ -121,6 +121,14 @@ class ScraperService:
         }
         return self.exporter.export(result, name, fmt_map.get(fmt, ExportFormat.JSON))
 
+    async def export_all(self, result: ScrapeResult, name: str = "scrape_result") -> dict[str, str]:
+        """Esporta il risultato in tutti i formati (JSON, CSV, Excel)."""
+        return self.exporter.export_all(result, name)
+
+    @property
+    def output_dir(self) -> str:
+        return str(self.exporter.output_dir.resolve())
+
     async def close(self) -> None:
         await self.browser.close()
         self._current_page = None

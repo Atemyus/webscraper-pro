@@ -83,10 +83,14 @@ class ResultsView(ft.Container):
         stats_row = self._build_stats(result)
         tabs_content = self._build_tabs(result)
 
+        # Intestazione e statistiche restano fisse in alto; l'area dei tab
+        # occupa lo spazio rimanente e scrolla internamente (le ListView/GridView
+        # dei singoli tab hanno il proprio scroll). NON rendere scrollabile questa
+        # Column esterna: andrebbe in conflitto con lo scroll interno dei tab,
+        # rendendo lo scroll impossibile o a scatti.
         return ft.Column(
             controls=[header, stats_row, tabs_content],
             spacing=20,
-            scroll=ft.ScrollMode.AUTO,
             expand=True,
         )
 
@@ -128,6 +132,17 @@ class ResultsView(ft.Container):
 
     def _build_action_buttons(self) -> list[ft.Control]:
         return [
+            ft.FilledButton(
+                content="Scarica tutto",
+                icon=ft.Icons.DOWNLOAD,
+                style=ft.ButtonStyle(
+                    shape=ft.RoundedRectangleBorder(radius=8),
+                    padding=ft.padding.Padding(left=16, right=16, top=8, bottom=8),
+                    text_style=ft.TextStyle(size=12, weight=ft.FontWeight.W_600),
+                ),
+                tooltip="Esporta JSON + CSV + Excel e apri la cartella",
+                on_click=lambda _: self._export_all(),
+            ),
             ft.FilledTonalButton(
                 content="JSON",
                 icon=ft.Icons.CODE,
@@ -378,14 +393,46 @@ class ResultsView(ft.Container):
     async def _export(self, fmt: str) -> None:
         path = await self.app.export_result(fmt)
         if path:
-            self._show_snackbar(f"Esportato: {path}")
+            self._reveal_folder(path)
+            self._show_snackbar(f"File {fmt.upper()} salvato in: {path}")
         else:
             self._show_snackbar("Nessun risultato da esportare", ft.Colors.RED_400)
+
+    async def _export_all(self) -> None:
+        paths = await self.app.export_all_results()
+        if paths:
+            folder = self.app.output_dir
+            self._reveal_folder(folder)
+            formats = ", ".join(sorted(p.upper() for p in paths))
+            self._show_snackbar(f"Salvati {formats} nella cartella: {folder}")
+        else:
+            self._show_snackbar("Nessun risultato da esportare", ft.Colors.RED_400)
+
+    def _reveal_folder(self, path: str) -> None:
+        """Apre la cartella che contiene i file esportati nel file manager."""
+        import os
+        import platform
+        import subprocess
+
+        folder = path if os.path.isdir(path) else os.path.dirname(os.path.abspath(path))
+        try:
+            system = platform.system()
+            if system == "Windows":
+                os.startfile(folder)  # type: ignore[attr-defined]
+            elif system == "Darwin":
+                subprocess.Popen(["open", folder])
+            else:
+                subprocess.Popen(["xdg-open", folder])
+        except Exception:
+            # Apertura non riuscita (es. ambiente headless): il percorso resta
+            # comunque mostrato nello snackbar.
+            pass
 
     def _show_snackbar(self, msg: str, color=ft.Colors.GREEN_400) -> None:
         self.page.show_dialog(
             ft.SnackBar(
                 content=ft.Text(msg, size=13, color=color),
                 bgcolor=ft.Colors.with_opacity(0.95, "#1a1d27"),
+                duration=6000,
             )
         )

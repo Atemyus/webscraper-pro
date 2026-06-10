@@ -149,8 +149,10 @@ class HomeView(ft.Container):
                         controls=[
                             ft.Text("Filtri", size=14, weight=ft.FontWeight.W_600, color=ft.Colors.GREY_300),
                             ft.Icon(ft.Icons.TUNE, size=16, color=ft.Colors.GREY_500),
+                            ft.Text("(tutti opzionali — puoi lasciarli vuoti)", size=12, italic=True, color=ft.Colors.GREY_500),
                         ],
                         spacing=6,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                     ft.Divider(height=6, color=ft.Colors.TRANSPARENT),
                     self._filters_container,
