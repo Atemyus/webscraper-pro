@@ -1,0 +1,22 @@
+# Web Scraper Pro — Universal Web Scraping Tool
+
+# --- GUI ---
+flet>=0.25.0
+
+# --- Core scraping ---
+requests>=2.31
+beautifulsoup4>=4.12
+lxml>=5.0
+curl_cffi>=0.7
+playwright>=1.44
+
+# --- Export ---
+openpyxl>=3.1
+
+# --- AI extraction (optional) ---
+# openai>=1.0
+# anthropic>=0.30
+
+# --- Utils ---
+markdownify>=0.12
+Pillow>=10.0
