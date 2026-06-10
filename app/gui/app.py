@@ -27,10 +27,10 @@ class ScraperApp:
         self.page.theme_mode = ft.ThemeMode.DARK
         self.page.padding = 0
         self.page.spacing = 0
-        self.page.window_width = 1400
-        self.page.window_height = 900
-        self.page.window_min_width = 1000
-        self.page.window_min_height = 700
+        self.page.window.width = 1400
+        self.page.window.height = 900
+        self.page.window.min_width = 1000
+        self.page.window.min_height = 700
 
         self.page.theme = ft.Theme(
             color_scheme_seed=ft.Colors.INDIGO,
@@ -183,8 +183,11 @@ class ScraperApp:
                 headless=True,
                 screenshot=True,
             )
-            self.results_view.display_result(result, url, keywords)
+            # Monta prima la results view nella pagina, poi popolala: in caso
+            # contrario display_result chiamerebbe .update() su un controllo
+            # non ancora aggiunto alla pagina.
             self._navigate("results")
+            self.results_view.display_result(result, url, keywords)
         except Exception as e:
             logger.error("Scraping error: %s", e)
             self.home_view.show_error(str(e))

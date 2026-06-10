@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 from app.engine import BrowserManager, ContentExtractor, PageInteractor
 from app.engine.adapters import GenericAdapter
 from app.engine.adapters.base_adapter import BaseAdapter
+from app.filters import apply_category_filters
 from app.models.scrape_result import ScrapeResult
 from app.export import Exporter
 
@@ -54,7 +55,12 @@ class ScraperService:
             self._current_page = page
 
             logger.info("Navigo a: %s (categoria: %s)", url, category or "generica")
-            await page.goto(url, wait_until="networkidle", timeout=30000)
+            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            # Best-effort: lascia stabilizzare le richieste di rete (SPA, lazy load).
+            try:
+                await page.wait_for_load_state("networkidle", timeout=8000)
+            except Exception:
+                logger.debug("networkidle non raggiunto, proseguo")
 
             wait_sel = wait_for or filters.get("wait_for", "")
             if wait_sel:
@@ -68,17 +74,11 @@ class ScraperService:
                 for action in interactions:
                     await self._execute_interaction(interactor, action)
 
-            max_items = int(filters.get("max_items", "0")) if filters.get("max_items") else 0
             adapter = self._select_adapter(url)
-            result = await adapter.scrape(page, url, keywords)
-
-            if max_items > 0 and len(result.items) > max_items:
-                result.items = result.items[:max_items]
-
-            if filters.get("include_images") is False:
-                result.items = [i for i in result.items if i.type != "image"]
-            if filters.get("include_links") is False:
-                result.items = [i for i in result.items if i.type != "link"]
+            # Estrai tutto: il filtraggio per categoria avviene dopo, in modo
+            # che ogni filtro "cozzi" davvero con i dati estratti.
+            result = await adapter.scrape(page, url, None)
+            result = apply_category_filters(result, category, filters, keywords)
 
             if screenshot:
                 ss_path = await self.browser.screenshot(page)
