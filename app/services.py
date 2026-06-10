@@ -74,11 +74,22 @@ class ScraperService:
                 for action in interactions:
                     await self._execute_interaction(interactor, action)
 
+            # Scroll automatico: molti siti (social, e-commerce, news) caricano
+            # i contenuti in modo lazy mentre si scorre. Senza questo otterremmo
+            # solo la prima schermata.
+            await self._auto_scroll(page)
+
+            final_url = page.url
             adapter = self._select_adapter(url)
             # Estrai tutto: il filtraggio per categoria avviene dopo, in modo
             # che ogni filtro "cozzi" davvero con i dati estratti.
             result = await adapter.scrape(page, url, None)
+            raw_count = len(result.items)
             result = apply_category_filters(result, category, filters, keywords)
+
+            # Avviso utile quando un sito restituisce pochi dati (tipicamente
+            # social/pagine dietro login o contenuti caricati solo dopo l'accesso).
+            result.notice = self._build_notice(url, final_url, category, raw_count)
 
             if screenshot:
                 ss_path = await self.browser.screenshot(page)
@@ -92,6 +103,55 @@ class ScraperService:
                 url=url,
                 error=f"Errore durante lo scraping: {str(e)}",
             )
+
+    async def _auto_scroll(self, page, rounds: int = 5) -> None:
+        """Scorre la pagina per innescare il caricamento lazy dei contenuti."""
+        try:
+            interactor = PageInteractor(page)
+            last_height = 0
+            for _ in range(rounds):
+                await interactor.scroll_to_bottom()
+                height = await page.evaluate("document.body.scrollHeight")
+                if height == last_height:
+                    break  # niente di nuovo da caricare
+                last_height = height
+        except Exception as e:
+            logger.debug("Auto-scroll interrotto: %s", e)
+
+    # Domini social che, da non loggati, mostrano quasi sempre solo i dati pubblici.
+    _SOCIAL_DOMAINS = ("instagram", "facebook", "twitter", "x.com", "tiktok", "linkedin", "threads")
+
+    def _build_notice(
+        self, url: str, final_url: str, category: str | None, raw_count: int
+    ) -> str | None:
+        domain = urlparse(final_url or url).netloc.lower()
+        is_social = any(d in domain for d in self._SOCIAL_DOMAINS)
+        looks_login = any(k in (final_url or "").lower() for k in ("login", "signin", "accedi", "/auth", "authwall"))
+
+        if is_social and raw_count == 0:
+            return (
+                "Il social non ha restituito contenuti pubblici per questo URL: "
+                "probabilmente richiede il login oppure ha bloccato la richiesta. "
+                "Prova con l'URL di un post o profilo pubblico (es. .../p/CODICE/)."
+            )
+        if is_social and (looks_login or raw_count <= 6):
+            return (
+                "Questo social mostra i contenuti completi solo dopo il login. "
+                "Sono stati estratti i dati pubblici disponibili (anteprima OpenGraph, "
+                "meta tag, dati strutturati e testo visibile). Per i feed/profili privati "
+                "non è possibile estrarre di più senza autenticazione."
+            )
+        if looks_login:
+            return (
+                "Il sito sembra aver reindirizzato a una pagina di login: estratti solo "
+                "i dati pubblici. Prova un URL accessibile senza autenticazione."
+            )
+        if raw_count == 0:
+            return (
+                "Nessun contenuto estratto: il sito potrebbe caricare i dati dinamicamente, "
+                "bloccare i bot o richiedere il login. Prova ad aumentare l'attesa o un altro URL."
+            )
+        return None
 
     async def _execute_interaction(self, interactor: PageInteractor, action: dict) -> None:
         action_type = action.get("type", "").lower()

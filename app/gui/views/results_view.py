@@ -83,15 +83,41 @@ class ResultsView(ft.Container):
         stats_row = self._build_stats(result)
         tabs_content = self._build_tabs(result)
 
+        controls = [header, stats_row]
+        if result.notice:
+            controls.append(self._build_notice(result.notice))
+        controls.append(tabs_content)
+
         # Intestazione e statistiche restano fisse in alto; l'area dei tab
         # occupa lo spazio rimanente e scrolla internamente (le ListView/GridView
         # dei singoli tab hanno il proprio scroll). NON rendere scrollabile questa
         # Column esterna: andrebbe in conflitto con lo scroll interno dei tab,
         # rendendo lo scroll impossibile o a scatti.
         return ft.Column(
-            controls=[header, stats_row, tabs_content],
+            controls=controls,
             spacing=20,
             expand=True,
+        )
+
+    def _build_notice(self, notice: str) -> ft.Container:
+        return ft.Container(
+            content=ft.Row(
+                controls=[
+                    ft.Icon(ft.Icons.INFO_OUTLINE, size=18, color=ft.Colors.AMBER_300),
+                    ft.Text(notice, size=12, color=ft.Colors.AMBER_100, expand=True),
+                ],
+                spacing=10,
+                vertical_alignment=ft.CrossAxisAlignment.START,
+            ),
+            padding=ft.padding.Padding(left=14, right=14, top=10, bottom=10),
+            border_radius=8,
+            bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.AMBER_400),
+            border=ft.border.Border(
+                left=ft.BorderSide(3, ft.Colors.AMBER_400),
+                top=ft.BorderSide(0, ft.Colors.TRANSPARENT),
+                right=ft.BorderSide(0, ft.Colors.TRANSPARENT),
+                bottom=ft.BorderSide(0, ft.Colors.TRANSPARENT),
+            ),
         )
 
     def _build_header(self, result: ScrapeResult, url: str) -> ft.Container:
