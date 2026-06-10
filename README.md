@@ -5,12 +5,27 @@ Un'applicazione professionale di web scraping con interfaccia grafica moderna (F
 ## Funzionalità
 
 - **Scraping universale** — funziona con qualsiasi sito web
-- **Filtro per keywords** — trova solo le informazioni che ti interessano
+- **Categorie con filtri dedicati** — General, Social, Forum, Gaming, Statistiche, E-commerce, Notizie: ogni categoria ha i propri filtri pertinenti (prezzo, voto, periodo, brand, fonte, ecc.)
+- **Filtri che "cozzano" davvero** — keywords, esclusioni, range di prezzo/voto/recensioni, intervalli di date, ordinamento e limite vengono applicati ai dati estratti (vedi `app/filters.py`)
 - **Estrazione intelligente** — testi, tabelle, link, immagini, metadati
 - **Interazione con la pagina** — click, scroll, form filling, hover
 - **Esportazione** — JSON, CSV, Excel con formattazione professionale
 - **Browser headless** — basato su Playwright per gestire JS, SPA, Cloudflare
 - **Interfaccia moderna** — tema scuro, design reattivo, tabs, statistiche in tempo reale
+
+## Filtri per categoria
+
+Ogni categoria espone un set di filtri specifici. Esempi:
+
+- **E-commerce**: brand, prezzo min/max, valutazione minima, n. recensioni, disponibilità, ordinamento
+- **Notizie**: fonte, autore, categoria, intervallo di date, ordinamento (più recenti/vecchi)
+- **Statistiche**: lega, squadra, stagione, tipo statistica, valore minimo, intervallo di date
+- **Social / Forum**: account/subreddit, autore, periodo, like/upvote/commenti minimi
+- **Gaming**: genere, piattaforma, tipo recensioni, voto minimo, prezzo massimo
+
+I filtri vengono applicati dopo l'estrazione da `apply_category_filters()` (`app/filters.py`) in
+modo tollerante: un elemento privo di un valore interpretabile (es. nessun prezzo nel testo) non
+viene scartato da quel filtro, così i filtri restringono i risultati senza svuotarli su pagine generiche.
 
 ## Requisiti
 

@@ -71,7 +71,7 @@ class ResultsView(ft.Container):
                         horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                         spacing=12,
                     ),
-                    alignment=ft.alignment.center,
+                    alignment=ft.Alignment.CENTER,
                     expand=True,
                 ),
             ],
@@ -203,44 +203,46 @@ class ResultsView(ft.Container):
         )
 
     def _build_tabs(self, result: ScrapeResult) -> ft.Container:
-        tab_list = []
+        tabs: list[ft.Tab] = []
+        views: list[ft.Control] = []
 
         if result.texts:
-            t = ft.Tab(label=f"Testi ({len(result.texts)})", icon=ft.Icons.TEXT_FIELDS)
-            t.content = self._build_texts_tab(result.texts)
-            tab_list.append(t)
+            tabs.append(ft.Tab(label=f"Testi ({len(result.texts)})", icon=ft.Icons.TEXT_FIELDS))
+            views.append(self._build_texts_tab(result.texts))
 
         if result.tables:
-            t = ft.Tab(label=f"Tabelle ({len(result.tables)})", icon=ft.Icons.TABLE_CHART)
-            t.content = self._build_tables_tab(result.tables)
-            tab_list.append(t)
+            tabs.append(ft.Tab(label=f"Tabelle ({len(result.tables)})", icon=ft.Icons.TABLE_CHART))
+            views.append(self._build_tables_tab(result.tables))
 
         if result.links:
-            t = ft.Tab(label=f"Link ({len(result.links)})", icon=ft.Icons.LINK)
-            t.content = self._build_links_tab(result.links)
-            tab_list.append(t)
+            tabs.append(ft.Tab(label=f"Link ({len(result.links)})", icon=ft.Icons.LINK))
+            views.append(self._build_links_tab(result.links))
 
         if result.images:
-            t = ft.Tab(label=f"Immagini ({len(result.images)})", icon=ft.Icons.IMAGE)
-            t.content = self._build_images_tab(result.images)
-            tab_list.append(t)
+            tabs.append(ft.Tab(label=f"Immagini ({len(result.images)})", icon=ft.Icons.IMAGE))
+            views.append(self._build_images_tab(result.images))
 
-        if not tab_list:
-            t = ft.Tab(label="Info", icon=ft.Icons.INFO)
-            t.content = ft.Container(
+        if not tabs:
+            tabs.append(ft.Tab(label="Info", icon=ft.Icons.INFO))
+            views.append(ft.Container(
                 content=ft.Text("Nessun elemento estratto.", color=ft.Colors.GREY_400),
                 padding=40,
-            )
-            tab_list.append(t)
+            ))
 
         tabs_widget = ft.Tabs(
-            content=ft.Container(expand=True),
-            length=len(tab_list),
+            length=len(tabs),
             selected_index=0,
             animation_duration=300,
             expand=True,
+            content=ft.Column(
+                controls=[
+                    ft.TabBar(tabs=tabs, scrollable=True),
+                    ft.TabBarView(controls=views, expand=True),
+                ],
+                spacing=0,
+                expand=True,
+            ),
         )
-        tabs_widget.tabs = tab_list
 
         return ft.Container(
             content=tabs_widget,
@@ -358,7 +360,7 @@ class ResultsView(ft.Container):
                     ft.Icon(ft.Icons.OPEN_IN_NEW, size=16, color=ft.Colors.INDIGO_400),
                     ft.Column(
                         controls=[
-                            ft.Text(text or "(no text)", size=13, color=ft.Colors.WHITE, weight=ft.FontWeight.MEDIUM),
+                            ft.Text(text or "(no text)", size=13, color=ft.Colors.WHITE, weight=ft.FontWeight.W_500),
                             ft.Text(url, size=11, color=ft.Colors.INDIGO_300, selectable=True),
                         ],
                         spacing=0,
@@ -381,9 +383,9 @@ class ResultsView(ft.Container):
             self._show_snackbar("Nessun risultato da esportare", ft.Colors.RED_400)
 
     def _show_snackbar(self, msg: str, color=ft.Colors.GREEN_400) -> None:
-        self.page.snack_bar = ft.SnackBar(
-            content=ft.Text(msg, size=13),
-            bgcolor=ft.Colors.with_opacity(0.95, "#1a1d27"),
+        self.page.show_dialog(
+            ft.SnackBar(
+                content=ft.Text(msg, size=13, color=color),
+                bgcolor=ft.Colors.with_opacity(0.95, "#1a1d27"),
+            )
         )
-        self.page.snack_bar.open = True
-        self.page.update()

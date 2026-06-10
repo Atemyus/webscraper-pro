@@ -55,7 +55,7 @@ class BrowserManager:
             viewport=viewport or {"width": 1366, "height": 900},
             locale="it-IT",
             java_script_enabled=True,
-            ignore_https_errors=False,
+            ignore_https_errors=True,
         )
         page = await context.new_page()
         await page.add_init_script("""
