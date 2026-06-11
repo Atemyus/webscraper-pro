@@ -67,7 +67,10 @@ class ScraperService:
                     progress_cb=progress_cb,
                 )
             else:
-                crawler = GenericSiteCrawler(url, max_pages=(limit or 150))
+                crawler = GenericSiteCrawler(
+                    url, max_pages=(limit or 150),
+                    include_history=bool(filters.get("include_history")),
+                )
                 result = await crawler.crawl(progress_cb=progress_cb)
             return apply_category_filters(result, category, filters, keywords)
 

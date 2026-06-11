@@ -28,6 +28,10 @@ Ogni categoria espone un set di filtri specifici. Esempi:
     protetti da Cloudflare usa il browser riusando il cookie del challenge e legge anche le tabelle
     nascoste nei commenti HTML (tipico di fbref). Per questi siti, da IP datacenter Cloudflare blocca:
     avvia l'app dal tuo PC o imposta un proxy in Impostazioni.
+
+  L'opzione **"Includi stagioni passate"** vale per tutti: su soccerstats scopre i codici
+  `league=X_YYYY`, su fbref/footystats segue anche i link delle stagioni storiche (es. `/2023-2024/`,
+  `?season=2023`). Se spenta, resta sulla stagione corrente (più veloce).
 - **Social / Forum**: account/subreddit, autore, periodo, like/upvote/commenti minimi
 - **Gaming**: genere, piattaforma, tipo recensioni, voto minimo, prezzo massimo
 

@@ -307,10 +307,15 @@ class SoccerStatsCrawler:
 # --------------------------------------------------------------------------- #
 # Crawler generico (BFS) per qualsiasi sito — incl. fbref, footystats
 # --------------------------------------------------------------------------- #
+# Link che puntano a una stagione/anno specifico (storico): es. fbref
+# /2023-2024/, footystats ?season=2023, ecc.
+_SEASON_LINK_RE = re.compile(r"(20\d\d-20\d\d|20\d\d-\d\d|_20\d\d|/20\d\d[/_-]|season=20\d\d|year=20\d\d)", re.I)
+
+
 class GenericSiteCrawler:
     def __init__(self, start_url: str, max_pages: int = 150,
                  min_interval: float = 0.0, max_tables_per_page: int = 8,
-                 path_prefix: str | None = None):
+                 path_prefix: str | None = None, include_history: bool = True):
         if "://" not in start_url:
             start_url = "https://" + start_url
         self.start_url = start_url
@@ -318,6 +323,7 @@ class GenericSiteCrawler:
         self.max_pages = max(1, max_pages)
         self.max_tables_per_page = max_tables_per_page
         self.path_prefix = path_prefix
+        self.include_history = include_history
         self.use_browser = any(d in self.domain for d in _CF_DOMAINS)
         # fbref limita molto la frequenza: rallenta se non specificato.
         default_iv = 3.0 if self.use_browser else 1.0
@@ -346,6 +352,11 @@ class GenericSiteCrawler:
             if link in seen:
                 continue
             if self.path_prefix and self.path_prefix not in urlparse(link).path:
+                continue
+            # Senza "stagioni passate": salta i link verso stagioni/anni specifici
+            # (es. fbref /2023-2024/, footystats ?season=2023), così si resta sulla
+            # stagione corrente. Con la spunta attiva, si seguono tutti.
+            if not self.include_history and _SEASON_LINK_RE.search(link):
                 continue
             if len(seen) < self.max_pages * 5:
                 seen.add(link)
