@@ -379,7 +379,11 @@ class GenericSiteCrawler:
             from app.engine import BrowserManager
             from app import config
             bm = BrowserManager()
-            await bm.start(headless=config.get_headless())
+            headful = config.get_show_browser()
+            # Col browser visibile diamo tempo all'utente di risolvere a mano
+            # l'eventuale verifica Cloudflare (poi il cookie viene riusato).
+            self._cf_rounds = 45 if headful else 12
+            await bm.start(headless=not headful)
             page = await bm.new_page()
             try:
                 while queue and done < self.max_pages:
@@ -428,7 +432,7 @@ class GenericSiteCrawler:
             logger.debug("goto %s: %s", url, e)
             return ""
         # Attendi l'eventuale superamento del challenge Cloudflare (cookie riusato).
-        for _ in range(12):
+        for _ in range(getattr(self, "_cf_rounds", 12)):
             try:
                 html = await page.content()
             except Exception:
