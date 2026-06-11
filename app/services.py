@@ -52,17 +52,20 @@ class ScraperService:
 
         filters = filters or {}
 
-        # Modalità crawl completo di SoccerStats: tutti i campionati e metriche.
+        # Modalità crawl completo del sito (svuota-sito).
         if filters.get("crawl_all"):
-            from app.engine.crawler import SoccerStatsCrawler, is_soccerstats
+            from app.engine.crawler import SoccerStatsCrawler, GenericSiteCrawler, is_soccerstats
+            try:
+                limit = int(filters.get("max_leagues") or 0)
+            except (TypeError, ValueError):
+                limit = 0
             if is_soccerstats(url):
-                try:
-                    max_leagues = int(filters.get("max_leagues") or 0)
-                except (TypeError, ValueError):
-                    max_leagues = 0
                 crawler = SoccerStatsCrawler()
-                result = await crawler.crawl(max_leagues=max_leagues, progress_cb=progress_cb)
-                return apply_category_filters(result, category, filters, keywords)
+                result = await crawler.crawl(max_leagues=limit, progress_cb=progress_cb)
+            else:
+                crawler = GenericSiteCrawler(url, max_pages=(limit or 150))
+                result = await crawler.crawl(progress_cb=progress_cb)
+            return apply_category_filters(result, category, filters, keywords)
 
         try:
             await self.browser.start(headless=headless)

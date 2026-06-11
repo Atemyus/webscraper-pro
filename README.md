@@ -20,9 +20,14 @@ Ogni categoria espone un set di filtri specifici. Esempi:
 - **E-commerce**: brand, prezzo min/max, valutazione minima, n. recensioni, disponibilità, ordinamento
 - **Notizie**: fonte, autore, categoria, intervallo di date, ordinamento (più recenti/vecchi)
 - **Statistiche**: lega, squadra, stagione, tipo statistica, valore minimo, intervallo di date.
-  Include l'opzione **"Scarica TUTTO soccerstats"**: un crawler che visita tutti i campionati
-  e tutte le pagine-metrica del sito, aggrega le tabelle dati (etichettate per campionato e
-  metrica) e le rende esportabili in CSV/JSON/Excel. Usa "Max campionati" per limitarne il numero.
+  Include l'opzione **"Scarica TUTTO il sito — crawl completo"**: svuota l'intero sito aggregando
+  tutte le tabelle dati (etichettate per pagina/campionato), esportabili in CSV/JSON/Excel.
+  Usa "Max campionati/pagine" per limitarne l'ampiezza. Due motori automatici:
+  - **soccerstats** — crawl strutturato (tutti i campionati × tutte le pagine-metrica), via HTTP veloce.
+  - **fbref, footystats e altri** — crawl generico in ampiezza (segue i link interni); per i siti
+    protetti da Cloudflare usa il browser riusando il cookie del challenge e legge anche le tabelle
+    nascoste nei commenti HTML (tipico di fbref). Per questi siti, da IP datacenter Cloudflare blocca:
+    avvia l'app dal tuo PC o imposta un proxy in Impostazioni.
 - **Social / Forum**: account/subreddit, autore, periodo, like/upvote/commenti minimi
 - **Gaming**: genere, piattaforma, tipo recensioni, voto minimo, prezzo massimo
 
