@@ -45,6 +45,24 @@ playwright install chromium
 python main.py
 ```
 
+## Siti protetti (Cloudflare) e proxy
+
+Alcuni siti (es. **footystats.org**, **sofascore.com**) usano protezioni anti-bot
+Cloudflare. L'app prova in cascata: Chrome reale + stealth → cloudscraper →
+impersonazione TLS (curl_cffi), riusando i cookie del browser.
+
+Quando il blocco dipende dall'**IP** (tipico di IP datacenter/VPS), nessuna
+tecnica lato client basta: serve cambiare l'IP di uscita con un **proxy**
+(preferibilmente residenziale). Impostalo con una variabile d'ambiente:
+
+```bash
+export SCRAPER_PROXY="http://utente:password@host:porta"
+python main.py
+```
+
+Il proxy viene usato sia dal browser sia dai fallback HTTP. Per **soccerstats.com**
+(non bloccato) non serve nulla.
+
 ## Struttura del progetto
 
 ```

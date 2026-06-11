@@ -150,20 +150,24 @@ class ScraperService:
         looks_login = any(k in (final_url or "").lower() for k in ("login", "signin", "accedi", "/auth", "authwall"))
         challenged = any(m in challenge_blob.lower() for m in self._CHALLENGE_MARKERS)
 
+        proxy_hint = (
+            " Se il blocco persiste è quasi sempre dovuto al tuo IP: imposta un proxy "
+            "(meglio residenziale) con la variabile d'ambiente SCRAPER_PROXY="
+            "http://utente:password@host:porta e riprova."
+        )
+
         if challenged:
             return (
-                "Il sito è protetto da Cloudflare e ha mostrato una verifica anti-bot "
-                "che il browser automatico non è riuscito a superare. Riprova (a volte "
-                "passa al secondo tentativo) oppure apri prima il sito manualmente. "
-                "I siti con verifica interattiva non sono sempre estraibili in automatico."
+                "Il sito è protetto da Cloudflare e ha mostrato una verifica anti-bot. "
+                "Sono stati provati browser stealth, cloudscraper e impersonazione TLS "
+                "(curl_cffi) senza successo." + proxy_hint
             )
 
         if is_stats and raw_count == 0:
             return (
-                "Il sito di statistiche non ha restituito dati: probabilmente Cloudflare "
-                "ha bloccato la richiesta o i contenuti non si sono caricati in tempo. "
-                "Riprova (il challenge spesso passa al secondo tentativo) o usa l'URL di una "
-                "pagina specifica (es. classifica del campionato)."
+                "Il sito di statistiche non ha restituito dati: Cloudflare ha bloccato la "
+                "richiesta oppure i contenuti non si sono caricati in tempo. Riprova o usa "
+                "l'URL di una pagina specifica (es. classifica del campionato)." + proxy_hint
             )
 
         if is_social and raw_count == 0:

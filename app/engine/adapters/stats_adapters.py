@@ -18,6 +18,7 @@ tabelle, link, immagini) e vi **antepone** i dati strutturati specifici del sito
 from __future__ import annotations
 
 import logging
+import os
 import re
 from urllib.parse import urlparse
 
@@ -35,6 +36,22 @@ try:
     _HAS_CFFI = True
 except Exception:  # pragma: no cover
     _HAS_CFFI = False
+
+try:
+    import cloudscraper as _cloudscraper
+    _HAS_CLOUDSCRAPER = True
+except Exception:  # pragma: no cover
+    _HAS_CLOUDSCRAPER = False
+
+
+def _proxies_dict() -> dict | None:
+    """Proxy in formato requests/cloudscraper da env SCRAPER_PROXY/HTTPS_PROXY."""
+    raw = os.environ.get("SCRAPER_PROXY") or os.environ.get("HTTPS_PROXY")
+    if not raw:
+        return None
+    if "://" not in raw:
+        raw = f"http://{raw}"
+    return {"http": raw, "https": raw}
 
 
 _CLOUDFLARE_MARKERS = (
@@ -88,30 +105,49 @@ async def _wait_for_any_table(page: Page, timeout: int = 12000) -> None:
         logger.debug("Nessuna <table> comparsa entro il timeout")
 
 
-async def _curl_fetch_with_browser_cookies(page: Page, url: str) -> str | None:
-    """Fallback HTTP con curl_cffi (TLS di Chrome), riusando i cookie del browser.
+async def _http_fallback(page: Page, url: str) -> str | None:
+    """Catena di fallback HTTP per superare Cloudflare quando il browser è bloccato.
 
-    Spesso supera i challenge Cloudflare passivi (basati su fingerprint TLS) che
-    il browser headless non passa. Ritorna l'HTML o None se non utilizzabile."""
-    if not _HAS_CFFI:
-        return None
+    Prova, in ordine: cloudscraper (risolve i challenge JS) e curl_cffi
+    (impersona il TLS di Chrome), riusando i cookie già ottenuti dal browser e
+    instradando tutto attraverso l'eventuale proxy configurato. Ritorna l'HTML
+    di una pagina realmente superata, o None."""
     try:
         ck = await page.context.cookies()
         jar = {c["name"]: c["value"] for c in ck if c.get("name")}
     except Exception:
         jar = {}
+    proxies = _proxies_dict()
+    headers = {"User-Agent": _UA, "Accept-Language": "it-IT,it;q=0.9,en;q=0.8"}
 
-    for imp in ("chrome", "chrome124", "chrome120"):
+    # 1) cloudscraper: risolve il challenge JS "I'm under attack".
+    if _HAS_CLOUDSCRAPER:
         try:
-            resp = _cffi_requests.get(
-                url, impersonate=imp, cookies=jar or None, timeout=25,
-                headers={"User-Agent": _UA, "Accept-Language": "it-IT,it;q=0.9,en;q=0.8"},
+            scraper = _cloudscraper.create_scraper(
+                browser={"browser": "chrome", "platform": "windows", "desktop": True}
             )
+            if jar:
+                scraper.cookies.update(jar)
+            resp = scraper.get(url, timeout=40, proxies=proxies, headers=headers)
             if resp.status_code == 200 and not _is_challenge("", resp.text):
-                logger.info("curl_cffi (%s) ha superato la protezione: %s", imp, url)
+                logger.info("cloudscraper ha superato la protezione: %s", url)
                 return resp.text
         except Exception as e:
-            logger.debug("curl_cffi %s fallito: %s", imp, e)
+            logger.debug("cloudscraper fallito: %s", e)
+
+    # 2) curl_cffi: impersonazione del fingerprint TLS di Chrome.
+    if _HAS_CFFI:
+        for imp in ("chrome", "chrome124", "chrome120"):
+            try:
+                resp = _cffi_requests.get(
+                    url, impersonate=imp, cookies=jar or None, timeout=25,
+                    headers=headers, proxies=proxies,
+                )
+                if resp.status_code == 200 and not _is_challenge("", resp.text):
+                    logger.info("curl_cffi (%s) ha superato la protezione: %s", imp, url)
+                    return resp.text
+            except Exception as e:
+                logger.debug("curl_cffi %s fallito: %s", imp, e)
     return None
 
 
@@ -129,9 +165,9 @@ class _StatsBaseAdapter(BaseAdapter):
         passed = await _wait_through_cloudflare(page)
         title, html = await _read(page)
 
-        # Se il browser è ancora bloccato, tenta il fallback TLS con i suoi cookie.
+        # Se il browser è ancora bloccato, tenta la catena di fallback HTTP.
         if not passed or _is_challenge(title, html):
-            alt = await _curl_fetch_with_browser_cookies(page, url)
+            alt = await _http_fallback(page, url)
             if alt:
                 html = alt
 
