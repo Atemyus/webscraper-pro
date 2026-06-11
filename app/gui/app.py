@@ -191,7 +191,7 @@ class ScraperApp:
                 keywords=keywords,
                 category=category,
                 filters=filters,
-                headless=True,
+                headless=config.get_headless(),
                 screenshot=not is_crawl,
                 progress_cb=on_progress if is_crawl else None,
             )

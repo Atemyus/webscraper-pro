@@ -377,8 +377,9 @@ class GenericSiteCrawler:
 
         if self.use_browser:
             from app.engine import BrowserManager
+            from app import config
             bm = BrowserManager()
-            await bm.start(headless=True)
+            await bm.start(headless=config.get_headless())
             page = await bm.new_page()
             try:
                 while queue and done < self.max_pages:

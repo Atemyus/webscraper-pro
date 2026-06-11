@@ -54,6 +54,22 @@ def set_proxy(value: str) -> None:
     apply_config(cfg)
 
 
+def get_show_browser() -> bool:
+    """Se True, il browser viene avviato VISIBILE (headful): sul PC dell'utente
+    supera i challenge Cloudflare molto più spesso del browser nascosto."""
+    return bool(load_config().get("show_browser", False))
+
+
+def set_show_browser(value: bool) -> None:
+    cfg = load_config()
+    cfg["show_browser"] = bool(value)
+    save_config(cfg)
+
+
+def get_headless() -> bool:
+    return not get_show_browser()
+
+
 def proxies_for_requests(proxy: str | None = None) -> dict | None:
     """Dict proxy nel formato requests/curl_cffi, o None."""
     proxy = (proxy if proxy is not None else get_proxy()).strip()

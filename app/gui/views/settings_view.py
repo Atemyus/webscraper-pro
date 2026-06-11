@@ -29,6 +29,12 @@ class SettingsView(ft.Container):
             expand=True,
         )
 
+        self.show_browser_cb = ft.Checkbox(
+            label="Mostra il browser durante lo scraping (aiuta a superare Cloudflare su fbref/footystats)",
+            value=config.get_show_browser(),
+            check_color=ft.Colors.INDIGO_400,
+        )
+
         self.status_text = ft.Text("", size=13, color=ft.Colors.GREY_400, visible=False)
 
         save_btn = ft.FilledButton(
@@ -75,6 +81,14 @@ class SettingsView(ft.Container):
                                 ),
                                 ft.Divider(height=12, color=ft.Colors.TRANSPARENT),
                                 self.proxy_field,
+                                ft.Divider(height=12, color=ft.Colors.TRANSPARENT),
+                                self.show_browser_cb,
+                                ft.Text(
+                                    "Suggerimento per fbref/footystats: attiva questa opzione e, se "
+                                    "compare la verifica Cloudflare nella finestra del browser, "
+                                    "risolvila tu una volta — il crawler riuserà il via libera.",
+                                    size=11, color=ft.Colors.GREY_500, italic=True,
+                                ),
                                 ft.Divider(height=8, color=ft.Colors.TRANSPARENT),
                                 ft.Row(controls=[save_btn, test_btn], spacing=12),
                                 self.status_text,
@@ -99,9 +113,11 @@ class SettingsView(ft.Container):
 
     def _on_save(self, e) -> None:
         config.set_proxy(self.proxy_field.value or "")
+        config.set_show_browser(bool(self.show_browser_cb.value))
         val = config.get_proxy()
-        msg = "Proxy salvato e attivo." if val else "Proxy rimosso: connessione diretta."
-        self._show_status(msg, ft.Colors.GREEN_400)
+        browser = "browser visibile" if self.show_browser_cb.value else "browser nascosto"
+        proxy = "proxy attivo" if val else "connessione diretta"
+        self._show_status(f"Salvato: {proxy}, {browser}.", ft.Colors.GREEN_400)
 
     async def _on_test(self, e) -> None:
         # Salva prima, così il test usa il valore corrente del campo.

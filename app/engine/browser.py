@@ -80,8 +80,13 @@ class BrowserManager:
         self._screenshot_dir.mkdir(parents=True, exist_ok=True)
 
     async def start(self, headless: bool = True) -> None:
+        # Se il browser è già avviato ma in una modalità diversa (es. l'utente ha
+        # attivato "mostra browser"), riavvialo nella modalità richiesta.
         if self._browser is not None:
-            return
+            if getattr(self, "_headless", headless) == headless:
+                return
+            await self.close()
+        self._headless = headless
         self._playwright = await async_playwright().start()
         args = [
             "--disable-blink-features=AutomationControlled",
