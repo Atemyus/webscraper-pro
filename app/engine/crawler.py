@@ -151,8 +151,9 @@ def _internal_links(html: str, base_url: str, domain: str) -> list[str]:
 # Fetcher HTTP (rate limit + cache + cloudscraper/curl_cffi + proxy)
 # --------------------------------------------------------------------------- #
 class _HttpFetcher:
-    def __init__(self, min_interval: float = 1.0):
+    def __init__(self, min_interval: float = 1.0, cookies: dict | None = None):
         self.min_interval = min_interval
+        self.cookies = cookies or None
         self._last = 0.0
         self._cache: dict[str, str] = {}
         self._proxies = _proxies()
@@ -186,21 +187,25 @@ class _HttpFetcher:
         return ""
 
     def _backends(self):
+        ck = self.cookies
+
         def cffi(url, headers):
             if not _HAS_CFFI:
                 return ""
             r = _cffi_requests.get(url, impersonate="chrome", timeout=25,
-                                   headers=headers, proxies=self._proxies)
+                                   headers=headers, proxies=self._proxies, cookies=ck)
             return r.text if r.status_code == 200 else ""
 
         def cloud(url, headers):
             if not self._scraper:
                 return ""
-            r = self._scraper.get(url, timeout=40, headers=headers, proxies=self._proxies)
+            r = self._scraper.get(url, timeout=40, headers=headers,
+                                  proxies=self._proxies, cookies=ck)
             return r.text if r.status_code == 200 else ""
 
         def std(url, headers):
-            r = _std_requests.get(url, timeout=25, headers=headers, proxies=self._proxies)
+            r = _std_requests.get(url, timeout=25, headers=headers,
+                                  proxies=self._proxies, cookies=ck)
             return r.text if r.status_code == 200 else ""
 
         return [cffi, cloud, std]
@@ -368,12 +373,30 @@ class GenericSiteCrawler:
         queue: list[str] = [self.start_url]
         seen: set[str] = {self.start_url}
         done = 0
+        imported_cookies: list[dict] = []
 
         async def report(msg: str) -> None:
             if progress_cb:
                 r = progress_cb(done, self.max_pages, msg)
                 if asyncio.iscoroutine(r):
                     await r
+
+        # Per i siti Cloudflare: prova a riusare i cookie del browser dell'utente
+        # (che ha già superato Turnstile a mano). Se il cf_clearance funziona via
+        # HTTP, si crawla velocemente senza browser.
+        if self.use_browser:
+            from app import cookies as _cookies
+            ck_dict = await asyncio.to_thread(_cookies.load_cookies_dict, self.domain)
+            if ck_dict.get("cf_clearance"):
+                imported_cookies = await asyncio.to_thread(
+                    _cookies.load_cookies_for_playwright, self.domain)
+                probe_fetcher = _HttpFetcher(self.min_interval, cookies=ck_dict)
+                test = await asyncio.to_thread(probe_fetcher.get, self.start_url)
+                if test and not _is_challenge(test):
+                    logger.info("Cookie del browser validi: crawl via HTTP (no Turnstile)")
+                    self.use_browser = False
+                    self.http = probe_fetcher
+                    self.min_interval = max(self.min_interval, 1.0)
 
         if self.use_browser:
             from app.engine import BrowserManager
@@ -385,6 +408,14 @@ class GenericSiteCrawler:
             self._cf_rounds = 45 if headful else 12
             await bm.start(headless=not headful)
             page = await bm.new_page()
+            # Inietta i cookie del browser dell'utente (cf_clearance): se validi,
+            # la pagina si apre senza ripresentare la verifica Turnstile.
+            if imported_cookies:
+                try:
+                    await page.context.add_cookies(imported_cookies)
+                    logger.info("Iniettati %d cookie dal browser dell'utente", len(imported_cookies))
+                except Exception as e:
+                    logger.debug("add_cookies fallito: %s", e)
             try:
                 while queue and done < self.max_pages:
                     url = queue.pop(0)
@@ -414,9 +445,10 @@ class GenericSiteCrawler:
         result.title = f"{self.domain} — crawl: {done} pagine, {len(result.items)} tabelle"
         if len(result.items) == 0 and self.use_browser:
             result.notice = (
-                f"Nessun dato da {self.domain}: il sito è protetto da Cloudflare e il "
-                "browser non ha superato la verifica da questo IP. Avvia l'app dal tuo PC "
-                "(IP residenziale) o imposta un proxy nelle Impostazioni e riprova.")
+                f"Nessun dato da {self.domain}: la verifica Cloudflare/Turnstile non è "
+                f"stata superata. Soluzione: apri {self.domain} nel TUO browser (Chrome/"
+                "Edge), supera la verifica una volta, poi rilancia il crawl: l'app riuserà "
+                "automaticamente il cookie di sblocco letto dal tuo browser.")
         else:
             result.notice = (
                 f"Crawl di {self.domain}: visitate {done} pagine, estratte "

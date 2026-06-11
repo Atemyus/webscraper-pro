@@ -117,6 +117,14 @@ async def _http_fallback(page: Page, url: str) -> str | None:
         jar = {c["name"]: c["value"] for c in ck if c.get("name")}
     except Exception:
         jar = {}
+    # Aggiungi i cookie del browser reale dell'utente (cf_clearance già sbloccato).
+    try:
+        from urllib.parse import urlparse as _up
+        from app import cookies as _cookies
+        domain = _up(url).netloc.replace("www.", "")
+        jar.update(_cookies.load_cookies_dict(domain))
+    except Exception:
+        pass
     proxies = _proxies_dict()
     headers = {"User-Agent": _UA, "Accept-Language": "it-IT,it;q=0.9,en;q=0.8"}
 

@@ -11,6 +11,7 @@ curl_cffi>=0.7      # impersonazione TLS di Chrome: fallback anti-Cloudflare
 cloudscraper>=1.2   # risolve i challenge JS di Cloudflare (fallback)
 playwright>=1.44
 patchright>=1.0     # Playwright "non rilevabile": supera Cloudflare Turnstile
+browser_cookie3>=0.19  # importa i cookie (cf_clearance) dal browser dell'utente
 
 # --- Export ---
 openpyxl>=3.1
