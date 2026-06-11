@@ -84,24 +84,49 @@ class BrowserManager:
         self._initialized = True
         self._playwright = None
         self._browser = None
+        self._context = None
         self._channel = None
         self._screenshot_dir = Path(".screenshots")
         self._screenshot_dir.mkdir(parents=True, exist_ok=True)
 
     async def start(self, headless: bool = True) -> None:
-        # Se il browser è già avviato ma in una modalità diversa (es. l'utente ha
-        # attivato "mostra browser"), riavvialo nella modalità richiesta.
-        if self._browser is not None:
-            if getattr(self, "_headless", headless) == headless:
-                return
-            await self.close()
         self._headless = headless
-        self._playwright = await async_playwright().start()
+        if self._playwright is None:
+            self._playwright = await async_playwright().start()
+        if self._use_persistent():
+            if self._browser is not None:  # cambio modalità: chiudi il browser semplice
+                try:
+                    await self._browser.close()
+                except Exception:
+                    pass
+                self._browser = None
+            await self._ensure_persistent(headless)
+        else:
+            if self._context is not None:  # cambio modalità: chiudi il profilo
+                try:
+                    await self._context.close()
+                except Exception:
+                    pass
+                self._context = None
+            await self._ensure_browser(headless)
+
+    def _use_persistent(self) -> bool:
+        """Profilo persistente (Chrome reale + cookie su disco) per superare
+        Turnstile: attivo quando l'utente sceglie "Mostra browser"."""
+        try:
+            from app import config
+            return config.get_show_browser()
+        except Exception:
+            return False
+
+    async def _ensure_browser(self, headless: bool) -> None:
+        if self._browser is not None and getattr(self, "_browser_headless", None) == headless:
+            return
+        if self._browser is not None:
+            await self._browser.close()
+            self._browser = None
         if _USING_PATCHRIGHT:
-            # Con patchright NON usare flag di automazione (sono essi stessi un
-            # segnale): lo stealth è gestito internamente.
             args = ["--no-sandbox", "--disable-dev-shm-usage"]
-            logger.info("Modalità stealth: patchright attivo")
         else:
             args = [
                 "--disable-blink-features=AutomationControlled",
@@ -109,13 +134,10 @@ class BrowserManager:
                 "--disable-features=IsolateOrigins,site-per-process",
                 "--disable-dev-shm-usage",
             ]
-        # Chrome reale (channel="chrome") è molto meno rilevabile di Chromium per
-        # i challenge Cloudflare. Se non installato, si ripiega su Chromium.
         for channel in ("chrome", None):
             try:
                 self._browser = await self._playwright.chromium.launch(
-                    headless=headless, channel=channel, args=args,
-                )
+                    headless=headless, channel=channel, args=args)
                 self._channel = channel or "chromium"
                 break
             except Exception as e:
@@ -123,15 +145,65 @@ class BrowserManager:
         if self._browser is None:
             self._browser = await self._playwright.chromium.launch(headless=headless, args=args)
             self._channel = "chromium"
+        self._browser_headless = headless
         logger.info("Browser avviato (%s)", self._channel)
+
+    async def _ensure_persistent(self, headless: bool) -> None:
+        if self._context is not None and getattr(self, "_ctx_headless", None) == headless:
+            return
+        if self._context is not None:
+            try:
+                await self._context.close()
+            except Exception:
+                pass
+            self._context = None
+        profile = Path.home() / ".webscraper_pro" / "chrome_profile"
+        profile.mkdir(parents=True, exist_ok=True)
+        args = (["--no-sandbox", "--disable-dev-shm-usage"] if _USING_PATCHRIGHT else
+                ["--disable-blink-features=AutomationControlled", "--no-sandbox"])
+        kwargs: dict = dict(user_data_dir=str(profile), headless=headless, args=args,
+                            locale="it-IT", timezone_id="Europe/Rome",
+                            ignore_https_errors=True, no_viewport=True)
+        proxy = parse_proxy()
+        if proxy:
+            kwargs["proxy"] = proxy
+            logger.info("Uso proxy: %s", proxy["server"])
+        # Chrome reale / Edge sono molto meno rilevabili di Chromium per Turnstile.
+        for channel in ("chrome", "msedge", None):
+            try:
+                self._context = await self._playwright.chromium.launch_persistent_context(
+                    channel=channel, **kwargs)
+                self._channel = channel or "chromium"
+                break
+            except Exception as e:
+                logger.debug("Persistent channel=%s fallito: %s", channel, e)
+        if self._context is None:
+            self._context = await self._playwright.chromium.launch_persistent_context(
+                user_data_dir=str(profile), headless=headless, args=args, ignore_https_errors=True)
+            self._channel = "chromium"
+        self._ctx_headless = headless
+        logger.info("Profilo persistente avviato (%s)", self._channel)
 
     async def new_page(
         self,
         user_agent: Optional[str] = None,
         viewport: dict[str, int] | None = None,
     ) -> Page:
-        if self._browser is None:
-            await self.start()
+        if self._browser is None and self._context is None:
+            await self.start(getattr(self, "_headless", True))
+
+        # Modalità profilo persistente: riusa la pagina del profilo (cookie/cf_clearance
+        # restano su disco → la verifica Cloudflare si risolve una volta sola).
+        if self._context is not None:
+            pages = self._context.pages
+            page = pages[0] if pages else await self._context.new_page()
+            if not _USING_PATCHRIGHT:
+                try:
+                    await page.add_init_script(_STEALTH_JS)
+                except Exception:
+                    pass
+            return page
+
         ctx_kwargs: dict = dict(
             viewport=viewport or {"width": 1366, "height": 900},
             locale="it-IT",
@@ -139,8 +211,6 @@ class BrowserManager:
             java_script_enabled=True,
             ignore_https_errors=True,
         )
-        # Con patchright/Chrome reale conviene NON forzare uno user-agent finto
-        # (UA Windows su Linux è un segnale): si usa quello reale del browser.
         if not _USING_PATCHRIGHT:
             ctx_kwargs["user_agent"] = (
                 user_agent
@@ -155,7 +225,6 @@ class BrowserManager:
             logger.info("Uso proxy: %s", proxy["server"])
         context = await self._browser.new_context(**ctx_kwargs)
         page = await context.new_page()
-        # Le patch JS manuali sono rilevabili: applicale solo SENZA patchright.
         if not _USING_PATCHRIGHT:
             await page.add_init_script(_STEALTH_JS)
         return page
@@ -166,6 +235,12 @@ class BrowserManager:
         return path
 
     async def close(self) -> None:
+        if self._context:
+            try:
+                await self._context.close()
+            except Exception:
+                pass
+            self._context = None
         if self._browser:
             await self._browser.close()
             self._browser = None
