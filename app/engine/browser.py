@@ -7,17 +7,22 @@ from pathlib import Path
 from typing import Optional
 
 # patchright è un drop-in di Playwright "non rilevabile": nasconde i segnali di
-# automazione (CDP) che Cloudflare Turnstile usa per bloccare i browser pilotati.
-# Se installato lo usiamo, altrimenti si ripiega su Playwright normale.
+# automazione (CDP) che Cloudflare Turnstile usa. Se disponibile lo proviamo per
+# primo, ma manteniamo SEMPRE Playwright normale come riserva (così l'app parte
+# anche se i browser di patchright non sono installati).
+from playwright.async_api import async_playwright as _pw_playwright, Page, Browser
+
 try:
-    from patchright.async_api import async_playwright  # type: ignore
-    from playwright.async_api import Page, Browser
-    _USING_PATCHRIGHT = True
+    from patchright.async_api import async_playwright as _patchright_playwright  # type: ignore
+    _HAS_PATCHRIGHT = True
 except Exception:  # pragma: no cover
-    from playwright.async_api import async_playwright, Page, Browser
-    _USING_PATCHRIGHT = False
+    _patchright_playwright = None
+    _HAS_PATCHRIGHT = False
 
 logger = logging.getLogger("scraper.engine")
+
+# Canali (browser di sistema) da provare, in ordine. msedge c'è su ogni Windows.
+_CHANNELS = ("chrome", "msedge", None)
 
 
 def parse_proxy(raw: str | None = None) -> dict | None:
@@ -91,8 +96,6 @@ class BrowserManager:
 
     async def start(self, headless: bool = True) -> None:
         self._headless = headless
-        if self._playwright is None:
-            self._playwright = await async_playwright().start()
         if self._use_persistent():
             if self._browser is not None:  # cambio modalità: chiudi il browser semplice
                 try:
@@ -111,7 +114,7 @@ class BrowserManager:
             await self._ensure_browser(headless)
 
     def _use_persistent(self) -> bool:
-        """Profilo persistente (Chrome reale + cookie su disco) per superare
+        """Profilo persistente (browser reale + cookie su disco) per superare
         Turnstile: attivo quando l'utente sceglie "Mostra browser"."""
         try:
             from app import config
@@ -119,34 +122,59 @@ class BrowserManager:
         except Exception:
             return False
 
+    def _backends(self):
+        out = []
+        if _HAS_PATCHRIGHT:
+            out.append(("patchright", _patchright_playwright))
+        out.append(("playwright", _pw_playwright))
+        return out
+
+    @staticmethod
+    def _args(backend: str) -> list[str]:
+        if backend == "patchright":
+            return ["--no-sandbox", "--disable-dev-shm-usage"]
+        return [
+            "--disable-blink-features=AutomationControlled",
+            "--no-sandbox",
+            "--disable-features=IsolateOrigins,site-per-process",
+            "--disable-dev-shm-usage",
+        ]
+
+    def is_patchright(self) -> bool:
+        return getattr(self, "_backend", None) == "patchright"
+
     async def _ensure_browser(self, headless: bool) -> None:
         if self._browser is not None and getattr(self, "_browser_headless", None) == headless:
             return
         if self._browser is not None:
             await self._browser.close()
             self._browser = None
-        if _USING_PATCHRIGHT:
-            args = ["--no-sandbox", "--disable-dev-shm-usage"]
-        else:
-            args = [
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-features=IsolateOrigins,site-per-process",
-                "--disable-dev-shm-usage",
-            ]
-        for channel in ("chrome", None):
+        last_err = None
+        # Prova patchright (anti-Turnstile), poi Playwright normale come riserva;
+        # per ciascuno prova Chrome reale, Edge (presente su Windows), poi Chromium.
+        for backend, pwmod in self._backends():
             try:
-                self._browser = await self._playwright.chromium.launch(
-                    headless=headless, channel=channel, args=args)
-                self._channel = channel or "chromium"
-                break
+                pw = await pwmod().start()
             except Exception as e:
-                logger.debug("Launch channel=%s fallito: %s", channel, e)
-        if self._browser is None:
-            self._browser = await self._playwright.chromium.launch(headless=headless, args=args)
-            self._channel = "chromium"
-        self._browser_headless = headless
-        logger.info("Browser avviato (%s)", self._channel)
+                last_err = e
+                continue
+            args = self._args(backend)
+            for channel in _CHANNELS:
+                try:
+                    self._browser = await pw.chromium.launch(
+                        headless=headless, channel=channel, args=args)
+                    self._playwright, self._backend = pw, backend
+                    self._channel = channel or "chromium"
+                    self._browser_headless = headless
+                    logger.info("Browser: %s (%s)", backend, self._channel)
+                    return
+                except Exception as e:
+                    last_err = e
+            try:
+                await pw.stop()
+            except Exception:
+                pass
+        raise RuntimeError(f"Avvio browser fallito: {last_err}")
 
     async def _ensure_persistent(self, headless: bool) -> None:
         if self._context is not None and getattr(self, "_ctx_headless", None) == headless:
@@ -159,30 +187,36 @@ class BrowserManager:
             self._context = None
         profile = Path.home() / ".webscraper_pro" / "chrome_profile"
         profile.mkdir(parents=True, exist_ok=True)
-        args = (["--no-sandbox", "--disable-dev-shm-usage"] if _USING_PATCHRIGHT else
-                ["--disable-blink-features=AutomationControlled", "--no-sandbox"])
-        kwargs: dict = dict(user_data_dir=str(profile), headless=headless, args=args,
-                            locale="it-IT", timezone_id="Europe/Rome",
-                            ignore_https_errors=True, no_viewport=True)
         proxy = parse_proxy()
-        if proxy:
-            kwargs["proxy"] = proxy
-            logger.info("Uso proxy: %s", proxy["server"])
-        # Chrome reale / Edge sono molto meno rilevabili di Chromium per Turnstile.
-        for channel in ("chrome", "msedge", None):
+        last_err = None
+        for backend, pwmod in self._backends():
             try:
-                self._context = await self._playwright.chromium.launch_persistent_context(
-                    channel=channel, **kwargs)
-                self._channel = channel or "chromium"
-                break
+                pw = await pwmod().start()
             except Exception as e:
-                logger.debug("Persistent channel=%s fallito: %s", channel, e)
-        if self._context is None:
-            self._context = await self._playwright.chromium.launch_persistent_context(
-                user_data_dir=str(profile), headless=headless, args=args, ignore_https_errors=True)
-            self._channel = "chromium"
-        self._ctx_headless = headless
-        logger.info("Profilo persistente avviato (%s)", self._channel)
+                last_err = e
+                continue
+            kwargs: dict = dict(user_data_dir=str(profile), headless=headless,
+                                args=self._args(backend), locale="it-IT",
+                                timezone_id="Europe/Rome", ignore_https_errors=True,
+                                no_viewport=True)
+            if proxy:
+                kwargs["proxy"] = proxy
+            for channel in _CHANNELS:
+                try:
+                    self._context = await pw.chromium.launch_persistent_context(
+                        channel=channel, **kwargs)
+                    self._playwright, self._backend = pw, backend
+                    self._channel = channel or "chromium"
+                    self._ctx_headless = headless
+                    logger.info("Profilo persistente: %s (%s)", backend, self._channel)
+                    return
+                except Exception as e:
+                    last_err = e
+            try:
+                await pw.stop()
+            except Exception:
+                pass
+        raise RuntimeError(f"Avvio profilo persistente fallito: {last_err}")
 
     async def new_page(
         self,
@@ -197,7 +231,7 @@ class BrowserManager:
         if self._context is not None:
             pages = self._context.pages
             page = pages[0] if pages else await self._context.new_page()
-            if not _USING_PATCHRIGHT:
+            if not self.is_patchright():
                 try:
                     await page.add_init_script(_STEALTH_JS)
                 except Exception:
@@ -211,7 +245,7 @@ class BrowserManager:
             java_script_enabled=True,
             ignore_https_errors=True,
         )
-        if not _USING_PATCHRIGHT:
+        if not self.is_patchright():
             ctx_kwargs["user_agent"] = (
                 user_agent
                 or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -225,7 +259,7 @@ class BrowserManager:
             logger.info("Uso proxy: %s", proxy["server"])
         context = await self._browser.new_context(**ctx_kwargs)
         page = await context.new_page()
-        if not _USING_PATCHRIGHT:
+        if not self.is_patchright():
             await page.add_init_script(_STEALTH_JS)
         return page
 
