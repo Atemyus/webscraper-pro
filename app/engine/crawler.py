@@ -232,45 +232,74 @@ class SoccerStatsCrawler:
                 leagues.append(m.group(1))
         return leagues
 
+    @staticmethod
+    def _split_season(code: str) -> tuple[str, str]:
+        m = re.search(r"_(20\d\d)$", code)
+        if m:
+            return code[: m.start()], m.group(1)
+        return code, "corrente"
+
     async def crawl(self, leagues: Optional[list[str]] = None, max_leagues: int = 0,
+                    include_history: bool = False,
                     progress_cb: Optional[ProgressCb] = None) -> ScrapeResult:
         if leagues is None:
             leagues = await asyncio.to_thread(self.discover_leagues)
-        if max_leagues and max_leagues > 0:
-            leagues = leagues[:max_leagues]
 
+        # Coda di codici-campionato. Con include_history, le stagioni passate
+        # (codici league=X_YYYY) vengono scoperte dalla pagina di ogni campionato
+        # e aggiunte alla coda.
+        queue: list[str] = list(leagues)
+        queued: set[str] = set(queue)
         result = ScrapeResult(url=self.BASE, title="SoccerStats — crawl completo")
-        total = len(leagues) * len(self.METRIC_PAGES)
-        done = 0
         dedup: set[str] = set()
+        done = 0
+        processed = 0
+
+        def total_est() -> int:
+            return len(queued) * len(self.METRIC_PAGES)
 
         async def report(msg: str) -> None:
             if progress_cb:
-                r = progress_cb(done, total, msg)
+                r = progress_cb(done, total_est(), msg)
                 if asyncio.iscoroutine(r):
                     await r
 
-        for li, league in enumerate(leagues, 1):
+        while queue:
+            if max_leagues and max_leagues > 0 and processed >= max_leagues:
+                break
+            code = queue.pop(0)
+            processed += 1
+            base, season = self._split_season(code)
             for asp, metrica in self.METRIC_PAGES:
-                url = f"{self.BASE}/{asp}?league={league}"
+                url = f"{self.BASE}/{asp}?league={code}"
                 html = await asyncio.to_thread(self.http.get, url)
                 done += 1
                 if html:
+                    # Scopri le stagioni passate dalla pagina classifica del campionato.
+                    if include_history and season == "corrente" and asp == self.METRIC_PAGES[0][0]:
+                        for hc in re.findall(r"league=([a-zA-Z0-9]+_20\d\d)", html):
+                            if hc not in queued:
+                                queued.add(hc)
+                                queue.append(hc)
                     _, tables = _collect_tables(html)
-                    for item in _data_tables(tables, {"source": "soccerstats", "league": league,
-                                                      "metrica": metrica}, self.max_tables_per_page):
-                        key = f"{league}|{metrica}|{item.content['headers']}|{item.content['rows'][:1]}"
+                    for item in _data_tables(tables, {"source": "soccerstats", "league": base,
+                                                      "stagione": season, "metrica": metrica},
+                                             self.max_tables_per_page):
+                        key = f"{code}|{metrica}|{item.content['headers']}|{item.content['rows'][:1]}"
                         if key not in dedup:
                             dedup.add(key)
                             result.items.append(item)
                 if done % 5 == 0 or asp == self.METRIC_PAGES[0][0]:
-                    await report(f"Campionato {li}/{len(leagues)}: {league} — {metrica}")
+                    et = f"{season}" if season != "corrente" else "stagione corrente"
+                    await report(f"{base} ({et}) — {metrica}")
 
         leghe = len({i.attributes.get("league") for i in result.items})
+        stagioni = len({(i.attributes.get("league"), i.attributes.get("stagione")) for i in result.items})
         result.title = f"SoccerStats — crawl: {leghe} campionati, {len(result.items)} tabelle"
         result.notice = (
-            f"Crawl completo: {done} pagine, {len(leagues)} campionati, "
-            f"{len(result.items)} tabelle dati. Usa 'Scarica tutto' per l'intero dataset.")
+            f"Crawl completo: {done} pagine, {processed} codici-campionato, {leghe} campionati, "
+            f"{stagioni} stagioni, {len(result.items)} tabelle dati. "
+            "Usa 'Scarica tutto' per l'intero dataset.")
         await report("Completato")
         return result
 

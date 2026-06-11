@@ -61,7 +61,11 @@ class ScraperService:
                 limit = 0
             if is_soccerstats(url):
                 crawler = SoccerStatsCrawler()
-                result = await crawler.crawl(max_leagues=limit, progress_cb=progress_cb)
+                result = await crawler.crawl(
+                    max_leagues=limit,
+                    include_history=bool(filters.get("include_history")),
+                    progress_cb=progress_cb,
+                )
             else:
                 crawler = GenericSiteCrawler(url, max_pages=(limit or 150))
                 result = await crawler.crawl(progress_cb=progress_cb)

@@ -74,8 +74,10 @@ class Exporter:
                 data = item.content if isinstance(item.content, dict) else {}
                 headers = data.get("headers", []) or []
                 rows = data.get("rows", []) or []
-                kind = item.attributes.get("kind") or item.attributes.get("source") or ""
-                label = f"TABELLA {idx}" + (f" — {kind}" if kind else "")
+                a = item.attributes or {}
+                parts = [a.get(k) for k in ("league", "stagione", "metrica", "pagina", "kind") if a.get(k)]
+                descr = " — ".join(str(p) for p in parts) if parts else (a.get("source") or "")
+                label = f"TABELLA {idx}" + (f" — {descr}" if descr else "")
                 writer.writerow([label, f"{len(rows)} righe"])
                 if headers:
                     writer.writerow(headers)
