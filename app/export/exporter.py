@@ -54,13 +54,54 @@ class Exporter:
         return str(path)
 
     def _to_csv(self, result: ScrapeResult, name: str) -> str:
+        """CSV leggibile: ogni tabella è espansa in righe reali (apribile in Excel)."""
         path = self.output_dir / f"{name}.csv"
+
+        tables = [i for i in result.items if i.type == "table"]
+        texts = [i for i in result.items if i.type == "text"]
+        links = [i for i in result.items if i.type == "link"]
+        images = [i for i in result.items if i.type == "image"]
+
         with path.open("w", newline="", encoding="utf-8-sig") as f:
             writer = csv.writer(f)
-            writer.writerow(["Type", "Content", "Selector", "Attributes"])
-            for item in result.items:
-                content_str = str(item.content)[:32000]
-                writer.writerow([item.type, content_str, item.selector or "", str(item.attributes)])
+            writer.writerow(["WebScraper Pro — export"])
+            writer.writerow(["URL", result.url])
+            if result.title:
+                writer.writerow(["Titolo", result.title])
+            writer.writerow([])
+
+            for idx, item in enumerate(tables, 1):
+                data = item.content if isinstance(item.content, dict) else {}
+                headers = data.get("headers", []) or []
+                rows = data.get("rows", []) or []
+                kind = item.attributes.get("kind") or item.attributes.get("source") or ""
+                label = f"TABELLA {idx}" + (f" — {kind}" if kind else "")
+                writer.writerow([label, f"{len(rows)} righe"])
+                if headers:
+                    writer.writerow(headers)
+                for r in rows:
+                    writer.writerow(r)
+                writer.writerow([])
+
+            if texts:
+                writer.writerow(["TESTI"])
+                for it in texts:
+                    writer.writerow([str(it.content)[:32000]])
+                writer.writerow([])
+
+            if links:
+                writer.writerow(["LINK (testo)", "URL"])
+                for it in links:
+                    c = it.content if isinstance(it.content, dict) else {}
+                    writer.writerow([c.get("text", ""), c.get("url", "")])
+                writer.writerow([])
+
+            if images:
+                writer.writerow(["IMMAGINE (alt)", "URL"])
+                for it in images:
+                    c = it.content if isinstance(it.content, dict) else {}
+                    writer.writerow([c.get("alt", ""), c.get("url", "")])
+
         logger.info("Esportato CSV: %s", path)
         return str(path)
 
