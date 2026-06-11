@@ -12,6 +12,15 @@ class BaseAdapter(ABC):
     name: str = "base"
     domain_patterns: list[str] = []
 
+    async def before_navigate(self, page: Page, url: str) -> None:
+        """Hook eseguito sulla pagina PRIMA del goto.
+
+        Utile per agganciare listener di rete (es. catturare le risposte
+        dell'API interna di un sito) che devono essere attivi durante il
+        caricamento. Di default non fa nulla.
+        """
+        return None
+
     @abstractmethod
     async def scrape(self, page: Page, url: str, keywords: list[str] | None = None) -> ScrapeResult:
         ...

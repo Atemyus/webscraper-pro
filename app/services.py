@@ -56,6 +56,11 @@ class ScraperService:
             page = await self.browser.new_page()
             self._current_page = page
 
+            # Adapter scelto per dominio: l'hook before_navigate può agganciare
+            # listener di rete (es. cattura dell'API interna) prima del caricamento.
+            adapter = self._select_adapter(url)
+            await adapter.before_navigate(page, url)
+
             logger.info("Navigo a: %s (categoria: %s)", url, category or "generica")
             await page.goto(url, wait_until="domcontentloaded", timeout=30000)
             # Best-effort: lascia stabilizzare le richieste di rete (SPA, lazy load).
@@ -82,7 +87,6 @@ class ScraperService:
             await self._auto_scroll(page)
 
             final_url = page.url
-            adapter = self._select_adapter(url)
             # Estrai tutto: il filtraggio per categoria avviene dopo, in modo
             # che ogni filtro "cozzi" davvero con i dati estratti.
             result = await adapter.scrape(page, url, None)
