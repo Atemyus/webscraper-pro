@@ -297,11 +297,24 @@ class ResultsView(ft.Container):
             lv.controls.append(card)
         return lv
 
+    _MAX_RENDERED_TABLES = 120
+
     def _build_tables_tab(self, tables) -> ft.ListView:
         lv = ft.ListView(spacing=12, padding=ft.padding.Padding(top=12, bottom=12), expand=True)
-        for item in tables:
-            card = self._build_table_card(item)
-            lv.controls.append(card)
+        shown = tables[: self._MAX_RENDERED_TABLES]
+        for item in shown:
+            lv.controls.append(self._build_table_card(item))
+        if len(tables) > len(shown):
+            lv.controls.insert(0, ft.Container(
+                content=ft.Text(
+                    f"Mostrate {len(shown)} di {len(tables)} tabelle (per fluidità). "
+                    "Usa 'Scarica tutto' per esportarle TUTTE in CSV/JSON/Excel.",
+                    size=12, color=ft.Colors.AMBER_200,
+                ),
+                padding=ft.padding.Padding(left=12, right=12, top=8, bottom=8),
+                border_radius=8,
+                bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.AMBER_400),
+            ))
         return lv
 
     def _build_links_tab(self, links) -> ft.ListView:

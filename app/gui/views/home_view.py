@@ -362,6 +362,9 @@ class HomeView(ft.Container):
     def show_error(self, msg: str) -> None:
         self._show_status(f"Errore: {msg}", ft.Colors.RED_400)
 
+    def show_progress(self, msg: str) -> None:
+        self._show_status(msg, ft.Colors.INDIGO_200)
+
     def _show_status(self, msg: str, color=ft.Colors.GREY_400) -> None:
         self.status_text.value = msg
         self.status_text.color = color

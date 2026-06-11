@@ -45,11 +45,24 @@ class ScraperService:
         wait_for: str | None = None,
         interactions: list[dict] | None = None,
         screenshot: bool = False,
+        progress_cb=None,
     ) -> ScrapeResult:
         if not url.startswith(("http://", "https://")):
             url = "https://" + url
 
         filters = filters or {}
+
+        # Modalità crawl completo di SoccerStats: tutti i campionati e metriche.
+        if filters.get("crawl_all"):
+            from app.engine.crawler import SoccerStatsCrawler, is_soccerstats
+            if is_soccerstats(url):
+                try:
+                    max_leagues = int(filters.get("max_leagues") or 0)
+                except (TypeError, ValueError):
+                    max_leagues = 0
+                crawler = SoccerStatsCrawler()
+                result = await crawler.crawl(max_leagues=max_leagues, progress_cb=progress_cb)
+                return apply_category_filters(result, category, filters, keywords)
 
         try:
             await self.browser.start(headless=headless)

@@ -180,13 +180,20 @@ class ScraperApp:
             keywords_text = (filters or {}).get("keywords", "")
             keywords = [k.strip() for k in keywords_text.split(",") if k.strip()] if keywords_text else None
 
+            def on_progress(done: int, total: int, msg: str) -> None:
+                pct = f" ({done}/{total})" if total else ""
+                self.home_view.show_progress(f"{msg}{pct}")
+
+            # Lo screenshot non ha senso in modalità crawl (nessuna pagina singola).
+            is_crawl = bool((filters or {}).get("crawl_all"))
             result = await self.service.scrape(
                 url=url,
                 keywords=keywords,
                 category=category,
                 filters=filters,
                 headless=True,
-                screenshot=True,
+                screenshot=not is_crawl,
+                progress_cb=on_progress if is_crawl else None,
             )
             # Monta prima la results view nella pagina, poi popolala: in caso
             # contrario display_result chiamerebbe .update() su un controllo
