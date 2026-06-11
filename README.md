@@ -49,6 +49,7 @@ viene scartato da quel filtro, così i filtri restringono i risultati senza svuo
 ```bash
 pip install -r requirements.txt
 playwright install chromium
+patchright install chromium   # browser "non rilevabile" per i siti con Cloudflare Turnstile
 ```
 
 ## Avvio

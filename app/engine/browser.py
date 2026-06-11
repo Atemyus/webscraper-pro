@@ -6,7 +6,16 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from playwright.async_api import async_playwright, Page, Browser
+# patchright è un drop-in di Playwright "non rilevabile": nasconde i segnali di
+# automazione (CDP) che Cloudflare Turnstile usa per bloccare i browser pilotati.
+# Se installato lo usiamo, altrimenti si ripiega su Playwright normale.
+try:
+    from patchright.async_api import async_playwright  # type: ignore
+    from playwright.async_api import Page, Browser
+    _USING_PATCHRIGHT = True
+except Exception:  # pragma: no cover
+    from playwright.async_api import async_playwright, Page, Browser
+    _USING_PATCHRIGHT = False
 
 logger = logging.getLogger("scraper.engine")
 
@@ -88,12 +97,18 @@ class BrowserManager:
             await self.close()
         self._headless = headless
         self._playwright = await async_playwright().start()
-        args = [
-            "--disable-blink-features=AutomationControlled",
-            "--no-sandbox",
-            "--disable-features=IsolateOrigins,site-per-process",
-            "--disable-dev-shm-usage",
-        ]
+        if _USING_PATCHRIGHT:
+            # Con patchright NON usare flag di automazione (sono essi stessi un
+            # segnale): lo stealth è gestito internamente.
+            args = ["--no-sandbox", "--disable-dev-shm-usage"]
+            logger.info("Modalità stealth: patchright attivo")
+        else:
+            args = [
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-features=IsolateOrigins,site-per-process",
+                "--disable-dev-shm-usage",
+            ]
         # Chrome reale (channel="chrome") è molto meno rilevabile di Chromium per
         # i challenge Cloudflare. Se non installato, si ripiega su Chromium.
         for channel in ("chrome", None):
@@ -118,21 +133,31 @@ class BrowserManager:
         if self._browser is None:
             await self.start()
         ctx_kwargs: dict = dict(
-            user_agent=user_agent
-            or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             viewport=viewport or {"width": 1366, "height": 900},
             locale="it-IT",
             timezone_id="Europe/Rome",
             java_script_enabled=True,
             ignore_https_errors=True,
         )
+        # Con patchright/Chrome reale conviene NON forzare uno user-agent finto
+        # (UA Windows su Linux è un segnale): si usa quello reale del browser.
+        if not _USING_PATCHRIGHT:
+            ctx_kwargs["user_agent"] = (
+                user_agent
+                or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+        elif user_agent:
+            ctx_kwargs["user_agent"] = user_agent
+
         proxy = parse_proxy()
         if proxy:
             ctx_kwargs["proxy"] = proxy
             logger.info("Uso proxy: %s", proxy["server"])
         context = await self._browser.new_context(**ctx_kwargs)
         page = await context.new_page()
-        await page.add_init_script(_STEALTH_JS)
+        # Le patch JS manuali sono rilevabili: applicale solo SENZA patchright.
+        if not _USING_PATCHRIGHT:
+            await page.add_init_script(_STEALTH_JS)
         return page
 
     async def screenshot(self, page: Page, name: str = "page") -> str:
