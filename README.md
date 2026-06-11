@@ -19,7 +19,19 @@ Ogni categoria espone un set di filtri specifici. Esempi:
 
 - **E-commerce**: brand, prezzo min/max, valutazione minima, n. recensioni, disponibilità, ordinamento
 - **Notizie**: fonte, autore, categoria, intervallo di date, ordinamento (più recenti/vecchi)
-- **Statistiche**: lega, squadra, stagione, tipo statistica, valore minimo, intervallo di date
+- **Statistiche**: lega, squadra, stagione, tipo statistica, valore minimo, intervallo di date.
+  Include l'opzione **"Scarica TUTTO il sito — crawl completo"**: svuota l'intero sito aggregando
+  tutte le tabelle dati (etichettate per pagina/campionato), esportabili in CSV/JSON/Excel.
+  Usa "Max campionati/pagine" per limitarne l'ampiezza. Due motori automatici:
+  - **soccerstats** — crawl strutturato (tutti i campionati × tutte le pagine-metrica), via HTTP veloce.
+  - **fbref, footystats e altri** — crawl generico in ampiezza (segue i link interni); per i siti
+    protetti da Cloudflare usa il browser riusando il cookie del challenge e legge anche le tabelle
+    nascoste nei commenti HTML (tipico di fbref). Per questi siti, da IP datacenter Cloudflare blocca:
+    avvia l'app dal tuo PC o imposta un proxy in Impostazioni.
+
+  L'opzione **"Includi stagioni passate"** vale per tutti: su soccerstats scopre i codici
+  `league=X_YYYY`, su fbref/footystats segue anche i link delle stagioni storiche (es. `/2023-2024/`,
+  `?season=2023`). Se spenta, resta sulla stagione corrente (più veloce).
 - **Social / Forum**: account/subreddit, autore, periodo, like/upvote/commenti minimi
 - **Gaming**: genere, piattaforma, tipo recensioni, voto minimo, prezzo massimo
 
@@ -44,6 +56,24 @@ playwright install chromium
 ```bash
 python main.py
 ```
+
+## Siti protetti (Cloudflare) e proxy
+
+Alcuni siti (es. **footystats.org**, **sofascore.com**) usano protezioni anti-bot
+Cloudflare. L'app prova in cascata: Chrome reale + stealth → cloudscraper →
+impersonazione TLS (curl_cffi), riusando i cookie del browser.
+
+Quando il blocco dipende dall'**IP** (tipico di IP datacenter/VPS), nessuna
+tecnica lato client basta: serve cambiare l'IP di uscita con un **proxy**
+(preferibilmente residenziale). Impostalo con una variabile d'ambiente:
+
+```bash
+export SCRAPER_PROXY="http://utente:password@host:porta"
+python main.py
+```
+
+Il proxy viene usato sia dal browser sia dai fallback HTTP. Per **soccerstats.com**
+(non bloccato) non serve nulla.
 
 ## Struttura del progetto
 

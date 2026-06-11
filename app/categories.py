@@ -146,6 +146,9 @@ STATISTICS = CategoryDef(
         FilterDef("date_from", "Data inizio", "date", "es. 2024-01-01"),
         FilterDef("date_to", "Data fine", "date", "es. 2024-12-31"),
         FilterDef("sort_by", "Ordina per", "select", options=["Rilevanza", "Valore decrescente", "Valore crescente"]),
+        FilterDef("crawl_all", "Scarica TUTTO il sito — crawl completo (soccerstats, fbref, footystats...)", "checkbox", default=False),
+        FilterDef("include_history", "  ↳ Includi stagioni passate (anni precedenti)", "checkbox", default=False),
+        FilterDef("max_leagues", "  ↳ Max campionati/pagine (0 = automatico)", "number", "es. 0, 10, 200", default="0"),
     ],
     domain_patterns=["soccerstats", "footystats", "sofascore", "transfermarkt", "flashscore", "espn", "bleacher"],
 )

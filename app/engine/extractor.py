@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Optional
@@ -27,6 +28,10 @@ class ContentExtractor:
 
         all_items: list[ScrapedItem] = []
 
+        # I dati strutturati (OpenGraph, meta, JSON-LD) sono presenti su quasi
+        # ogni pagina — anche social e pagine dietro login — e contengono spesso
+        # titolo, descrizione/caption, autore e immagine reali. Vanno per primi.
+        all_items.extend(self._extract_structured(soup))
         all_items.extend(self._extract_text_blocks(soup, keywords))
         all_items.extend(self._extract_tables(soup, keywords))
         all_items.extend(self._extract_links(soup, keywords))
@@ -71,6 +76,135 @@ class ContentExtractor:
             if name and content:
                 meta[name.strip()] = content.strip()
         return meta
+
+    # Etichette leggibili per i meta tag più utili.
+    _META_HIGHLIGHTS = [
+        ("og:title", "Titolo"),
+        ("og:description", "Descrizione"),
+        ("og:site_name", "Sito"),
+        ("og:type", "Tipo contenuto"),
+        ("og:image", "Immagine"),
+        ("og:url", "URL"),
+        ("article:author", "Autore"),
+        ("article:published_time", "Pubblicato il"),
+        ("twitter:title", "Titolo (Twitter/X)"),
+        ("twitter:description", "Descrizione (Twitter/X)"),
+        ("twitter:image", "Immagine (Twitter/X)"),
+        ("description", "Meta description"),
+        ("author", "Autore"),
+        ("keywords", "Keywords"),
+    ]
+
+    def _extract_structured(self, soup: BeautifulSoup) -> list[ScrapedItem]:
+        """Estrae OpenGraph, meta principali e dati strutturati JSON-LD.
+
+        Sono i dati più affidabili: presenti su quasi ogni sito (social inclusi)
+        anche quando il corpo della pagina è dietro un login.
+        """
+        items: list[ScrapedItem] = []
+        seen: set[str] = set()
+        meta = self._extract_metadata(soup)
+
+        for key, label in self._META_HIGHLIGHTS:
+            value = meta.get(key)
+            if not value:
+                continue
+            content = f"{label}: {value}"
+            if content in seen:
+                continue
+            seen.add(content)
+            items.append(ScrapedItem(
+                type="text",
+                content=content,
+                selector=f"meta[{key}]",
+                attributes={"tag": "meta", "source": key},
+            ))
+
+        items.extend(self._extract_json_ld(soup, seen))
+        return items
+
+    def _extract_json_ld(self, soup: BeautifulSoup, seen: set[str]) -> list[ScrapedItem]:
+        items: list[ScrapedItem] = []
+        fields = [
+            ("name", "Nome"), ("headline", "Titolo"), ("alternativeHeadline", "Sottotitolo"),
+            ("description", "Descrizione"), ("articleBody", "Contenuto"),
+            ("datePublished", "Pubblicato il"), ("dateModified", "Aggiornato il"),
+            ("uploadDate", "Caricato il"), ("price", "Prezzo"), ("priceCurrency", "Valuta"),
+        ]
+
+        for tag in soup.find_all("script", attrs={"type": "application/ld+json"}):
+            raw = tag.string or tag.get_text() or ""
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                data = json.loads(raw)
+            except (ValueError, TypeError):
+                continue
+
+            objects = data if isinstance(data, list) else [data]
+            # JSON-LD può annidare gli oggetti in @graph.
+            flat: list[dict] = []
+            for obj in objects:
+                if isinstance(obj, dict):
+                    graph = obj.get("@graph")
+                    if isinstance(graph, list):
+                        flat.extend(o for o in graph if isinstance(o, dict))
+                    else:
+                        flat.append(obj)
+
+            for obj in flat:
+                obj_type = obj.get("@type", "Dato")
+                if isinstance(obj_type, list):
+                    obj_type = ", ".join(str(t) for t in obj_type)
+                parts: list[str] = []
+                for key, label in fields:
+                    val = obj.get(key)
+                    if not val:
+                        continue
+                    val = self._flatten_jsonld_value(val)
+                    if val:
+                        parts.append(f"{label}: {val}")
+                # Autore e rating sono spesso annidati.
+                author = self._flatten_jsonld_value(obj.get("author"))
+                if author:
+                    parts.append(f"Autore: {author}")
+                rating = obj.get("aggregateRating")
+                if isinstance(rating, dict) and rating.get("ratingValue"):
+                    rv = rating.get("ratingValue")
+                    rc = rating.get("reviewCount") or rating.get("ratingCount")
+                    parts.append(f"Valutazione: {rv}" + (f" ({rc} recensioni)" if rc else ""))
+
+                if not parts:
+                    continue
+                content = f"[{obj_type}] " + " | ".join(parts)
+                key = content[:120]
+                if key in seen:
+                    continue
+                seen.add(key)
+                items.append(ScrapedItem(
+                    type="text",
+                    content=content,
+                    selector="script[ld+json]",
+                    attributes={"tag": "json-ld", "schema": str(obj_type)},
+                ))
+
+        return items
+
+    @staticmethod
+    def _flatten_jsonld_value(val) -> str:
+        if val is None:
+            return ""
+        if isinstance(val, str):
+            return val.strip()
+        if isinstance(val, (int, float)):
+            return str(val)
+        if isinstance(val, dict):
+            return str(val.get("name") or val.get("@id") or val.get("url") or "").strip()
+        if isinstance(val, list):
+            flat = [ContentExtractor._flatten_jsonld_value(v) for v in val]
+            return ", ".join(f for f in flat if f)
+        return ""
 
     def _extract_text_blocks(
         self, soup: BeautifulSoup, keywords: list[str] | None = None

@@ -7,7 +7,7 @@ from typing import Optional
 from urllib.parse import urlparse
 
 from app.engine import BrowserManager, ContentExtractor, PageInteractor
-from app.engine.adapters import GenericAdapter
+from app.engine.adapters import GenericAdapter, STATS_ADAPTERS
 from app.engine.adapters.base_adapter import BaseAdapter
 from app.filters import apply_category_filters
 from app.models.scrape_result import ScrapeResult
@@ -21,7 +21,9 @@ class ScraperService:
         self.browser = BrowserManager()
         self.adapter = GenericAdapter()
         self.exporter = Exporter()
-        self._adapters: list[BaseAdapter] = [GenericAdapter()]
+        # Adapter dedicati (siti di statistiche) prima del generico: vengono
+        # scelti per dominio da _select_adapter; il generico è il fallback.
+        self._adapters: list[BaseAdapter] = [*STATS_ADAPTERS, GenericAdapter()]
         self._current_page = None
 
     def register_adapter(self, adapter: BaseAdapter) -> None:
@@ -43,16 +45,44 @@ class ScraperService:
         wait_for: str | None = None,
         interactions: list[dict] | None = None,
         screenshot: bool = False,
+        progress_cb=None,
     ) -> ScrapeResult:
         if not url.startswith(("http://", "https://")):
             url = "https://" + url
 
         filters = filters or {}
 
+        # Modalità crawl completo del sito (svuota-sito).
+        if filters.get("crawl_all"):
+            from app.engine.crawler import SoccerStatsCrawler, GenericSiteCrawler, is_soccerstats
+            try:
+                limit = int(filters.get("max_leagues") or 0)
+            except (TypeError, ValueError):
+                limit = 0
+            if is_soccerstats(url):
+                crawler = SoccerStatsCrawler()
+                result = await crawler.crawl(
+                    max_leagues=limit,
+                    include_history=bool(filters.get("include_history")),
+                    progress_cb=progress_cb,
+                )
+            else:
+                crawler = GenericSiteCrawler(
+                    url, max_pages=(limit or 150),
+                    include_history=bool(filters.get("include_history")),
+                )
+                result = await crawler.crawl(progress_cb=progress_cb)
+            return apply_category_filters(result, category, filters, keywords)
+
         try:
             await self.browser.start(headless=headless)
             page = await self.browser.new_page()
             self._current_page = page
+
+            # Adapter scelto per dominio: l'hook before_navigate può agganciare
+            # listener di rete (es. cattura dell'API interna) prima del caricamento.
+            adapter = self._select_adapter(url)
+            await adapter.before_navigate(page, url)
 
             logger.info("Navigo a: %s (categoria: %s)", url, category or "generica")
             await page.goto(url, wait_until="domcontentloaded", timeout=30000)
@@ -74,11 +104,26 @@ class ScraperService:
                 for action in interactions:
                     await self._execute_interaction(interactor, action)
 
-            adapter = self._select_adapter(url)
+            # Scroll automatico: molti siti (social, e-commerce, news) caricano
+            # i contenuti in modo lazy mentre si scorre. Senza questo otterremmo
+            # solo la prima schermata.
+            await self._auto_scroll(page)
+
+            final_url = page.url
             # Estrai tutto: il filtraggio per categoria avviene dopo, in modo
             # che ogni filtro "cozzi" davvero con i dati estratti.
             result = await adapter.scrape(page, url, None)
+            raw_count = len(result.items)
+            challenge_blob = (result.title or "") + " " + " ".join(
+                str(i.content) for i in result.items[:8]
+            )
             result = apply_category_filters(result, category, filters, keywords)
+
+            # Avviso utile quando un sito restituisce pochi dati (tipicamente
+            # social/pagine dietro login o contenuti caricati solo dopo l'accesso).
+            result.notice = self._build_notice(
+                url, final_url, category, raw_count, challenge_blob
+            )
 
             if screenshot:
                 ss_path = await self.browser.screenshot(page)
@@ -92,6 +137,86 @@ class ScraperService:
                 url=url,
                 error=f"Errore durante lo scraping: {str(e)}",
             )
+
+    async def _auto_scroll(self, page, rounds: int = 5) -> None:
+        """Scorre la pagina per innescare il caricamento lazy dei contenuti."""
+        try:
+            interactor = PageInteractor(page)
+            last_height = 0
+            for _ in range(rounds):
+                await interactor.scroll_to_bottom()
+                height = await page.evaluate("document.body.scrollHeight")
+                if height == last_height:
+                    break  # niente di nuovo da caricare
+                last_height = height
+        except Exception as e:
+            logger.debug("Auto-scroll interrotto: %s", e)
+
+    # Domini social che, da non loggati, mostrano quasi sempre solo i dati pubblici.
+    _SOCIAL_DOMAINS = ("instagram", "facebook", "twitter", "x.com", "tiktok", "linkedin", "threads")
+    # Siti di statistiche protetti da Cloudflare / resi via JavaScript.
+    _STATS_DOMAINS = ("soccerstats", "footystats", "sofascore")
+
+    _CHALLENGE_MARKERS = (
+        "just a moment", "checking your browser", "verifica di sicurezza",
+        "verifica riuscita", "verifying you are human", "enable javascript and cookies",
+        "controllo del browser", "needs to review the security",
+    )
+
+    def _build_notice(
+        self, url: str, final_url: str, category: str | None,
+        raw_count: int, challenge_blob: str = "",
+    ) -> str | None:
+        domain = urlparse(final_url or url).netloc.lower()
+        is_social = any(d in domain for d in self._SOCIAL_DOMAINS)
+        is_stats = any(d in domain for d in self._STATS_DOMAINS)
+        looks_login = any(k in (final_url or "").lower() for k in ("login", "signin", "accedi", "/auth", "authwall"))
+        challenged = any(m in challenge_blob.lower() for m in self._CHALLENGE_MARKERS)
+
+        proxy_hint = (
+            " Se il blocco persiste è quasi sempre dovuto al tuo IP: imposta un proxy "
+            "(meglio residenziale) con la variabile d'ambiente SCRAPER_PROXY="
+            "http://utente:password@host:porta e riprova."
+        )
+
+        if challenged:
+            return (
+                "Il sito è protetto da Cloudflare e ha mostrato una verifica anti-bot. "
+                "Sono stati provati browser stealth, cloudscraper e impersonazione TLS "
+                "(curl_cffi) senza successo." + proxy_hint
+            )
+
+        if is_stats and raw_count == 0:
+            return (
+                "Il sito di statistiche non ha restituito dati: Cloudflare ha bloccato la "
+                "richiesta oppure i contenuti non si sono caricati in tempo. Riprova o usa "
+                "l'URL di una pagina specifica (es. classifica del campionato)." + proxy_hint
+            )
+
+        if is_social and raw_count == 0:
+            return (
+                "Il social non ha restituito contenuti pubblici per questo URL: "
+                "probabilmente richiede il login oppure ha bloccato la richiesta. "
+                "Prova con l'URL di un post o profilo pubblico (es. .../p/CODICE/)."
+            )
+        if is_social and (looks_login or raw_count <= 6):
+            return (
+                "Questo social mostra i contenuti completi solo dopo il login. "
+                "Sono stati estratti i dati pubblici disponibili (anteprima OpenGraph, "
+                "meta tag, dati strutturati e testo visibile). Per i feed/profili privati "
+                "non è possibile estrarre di più senza autenticazione."
+            )
+        if looks_login:
+            return (
+                "Il sito sembra aver reindirizzato a una pagina di login: estratti solo "
+                "i dati pubblici. Prova un URL accessibile senza autenticazione."
+            )
+        if raw_count == 0:
+            return (
+                "Nessun contenuto estratto: il sito potrebbe caricare i dati dinamicamente, "
+                "bloccare i bot o richiedere il login. Prova ad aumentare l'attesa o un altro URL."
+            )
+        return None
 
     async def _execute_interaction(self, interactor: PageInteractor, action: dict) -> None:
         action_type = action.get("type", "").lower()
@@ -120,6 +245,14 @@ class ScraperService:
             "xlsx": ExportFormat.EXCEL,
         }
         return self.exporter.export(result, name, fmt_map.get(fmt, ExportFormat.JSON))
+
+    async def export_all(self, result: ScrapeResult, name: str = "scrape_result") -> dict[str, str]:
+        """Esporta il risultato in tutti i formati (JSON, CSV, Excel)."""
+        return self.exporter.export_all(result, name)
+
+    @property
+    def output_dir(self) -> str:
+        return str(self.exporter.output_dir.resolve())
 
     async def close(self) -> None:
         await self.browser.close()

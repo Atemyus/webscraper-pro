@@ -83,11 +83,41 @@ class ResultsView(ft.Container):
         stats_row = self._build_stats(result)
         tabs_content = self._build_tabs(result)
 
+        controls = [header, stats_row]
+        if result.notice:
+            controls.append(self._build_notice(result.notice))
+        controls.append(tabs_content)
+
+        # Intestazione e statistiche restano fisse in alto; l'area dei tab
+        # occupa lo spazio rimanente e scrolla internamente (le ListView/GridView
+        # dei singoli tab hanno il proprio scroll). NON rendere scrollabile questa
+        # Column esterna: andrebbe in conflitto con lo scroll interno dei tab,
+        # rendendo lo scroll impossibile o a scatti.
         return ft.Column(
-            controls=[header, stats_row, tabs_content],
+            controls=controls,
             spacing=20,
-            scroll=ft.ScrollMode.AUTO,
             expand=True,
+        )
+
+    def _build_notice(self, notice: str) -> ft.Container:
+        return ft.Container(
+            content=ft.Row(
+                controls=[
+                    ft.Icon(ft.Icons.INFO_OUTLINE, size=18, color=ft.Colors.AMBER_300),
+                    ft.Text(notice, size=12, color=ft.Colors.AMBER_100, expand=True),
+                ],
+                spacing=10,
+                vertical_alignment=ft.CrossAxisAlignment.START,
+            ),
+            padding=ft.padding.Padding(left=14, right=14, top=10, bottom=10),
+            border_radius=8,
+            bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.AMBER_400),
+            border=ft.border.Border(
+                left=ft.BorderSide(3, ft.Colors.AMBER_400),
+                top=ft.BorderSide(0, ft.Colors.TRANSPARENT),
+                right=ft.BorderSide(0, ft.Colors.TRANSPARENT),
+                bottom=ft.BorderSide(0, ft.Colors.TRANSPARENT),
+            ),
         )
 
     def _build_header(self, result: ScrapeResult, url: str) -> ft.Container:
@@ -128,6 +158,17 @@ class ResultsView(ft.Container):
 
     def _build_action_buttons(self) -> list[ft.Control]:
         return [
+            ft.FilledButton(
+                content="Scarica tutto",
+                icon=ft.Icons.DOWNLOAD,
+                style=ft.ButtonStyle(
+                    shape=ft.RoundedRectangleBorder(radius=8),
+                    padding=ft.padding.Padding(left=16, right=16, top=8, bottom=8),
+                    text_style=ft.TextStyle(size=12, weight=ft.FontWeight.W_600),
+                ),
+                tooltip="Esporta JSON + CSV + Excel e apri la cartella",
+                on_click=lambda _: self._export_all(),
+            ),
             ft.FilledTonalButton(
                 content="JSON",
                 icon=ft.Icons.CODE,
@@ -256,11 +297,24 @@ class ResultsView(ft.Container):
             lv.controls.append(card)
         return lv
 
+    _MAX_RENDERED_TABLES = 120
+
     def _build_tables_tab(self, tables) -> ft.ListView:
         lv = ft.ListView(spacing=12, padding=ft.padding.Padding(top=12, bottom=12), expand=True)
-        for item in tables:
-            card = self._build_table_card(item)
-            lv.controls.append(card)
+        shown = tables[: self._MAX_RENDERED_TABLES]
+        for item in shown:
+            lv.controls.append(self._build_table_card(item))
+        if len(tables) > len(shown):
+            lv.controls.insert(0, ft.Container(
+                content=ft.Text(
+                    f"Mostrate {len(shown)} di {len(tables)} tabelle (per fluidità). "
+                    "Usa 'Scarica tutto' per esportarle TUTTE in CSV/JSON/Excel.",
+                    size=12, color=ft.Colors.AMBER_200,
+                ),
+                padding=ft.padding.Padding(left=12, right=12, top=8, bottom=8),
+                border_radius=8,
+                bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.AMBER_400),
+            ))
         return lv
 
     def _build_links_tab(self, links) -> ft.ListView:
@@ -306,35 +360,46 @@ class ResultsView(ft.Container):
 
     def _build_table_card(self, item) -> ft.Container:
         data = item.content
-        headers = data.get("headers", [])
-        rows = data.get("rows", [])
+        headers = list(data.get("headers", []) or [])
+        rows = data.get("rows", []) or []
 
-        if not headers and rows:
-            headers = [f"Col {i+1}" for i in range(len(rows[0]))]
+        # Numero di colonne: il massimo fra header e righe. Le tabelle reali
+        # hanno spesso righe di lunghezza diversa (colspan/rowspan): per evitare
+        # il crash del DataTable di Flet ("DataRow deve avere tante celle quante
+        # le colonne") normalizziamo TUTTE le righe e gli header a ncols.
+        ncols = len(headers)
+        for r in rows:
+            ncols = max(ncols, len(r))
+        if ncols == 0:
+            return ft.Container(
+                content=ft.Text("Tabella vuota", size=12, color=ft.Colors.GREY_500),
+                padding=16,
+            )
+        if len(headers) < ncols:
+            headers = headers + [f"Col {i+1}" for i in range(len(headers), ncols)]
+        else:
+            headers = headers[:ncols]
+
+        def pad(seq, n):
+            seq = list(seq)[:n]
+            return seq + [""] * (n - len(seq))
 
         table_rows = []
-        if headers:
-            table_rows.append(
-                ft.DataRow(
-                    cells=[ft.DataCell(ft.Text(h, weight=ft.FontWeight.BOLD, size=12, color=ft.Colors.INDIGO_300)) for h in headers],
-                    color=ft.Colors.with_opacity(0.05, ft.Colors.INDIGO_200),
-                )
-            )
-
         for r in rows[:50]:
-            cells = []
-            for ci, val in enumerate(r):
-                cells.append(ft.DataCell(ft.Text(str(val)[:100], size=12, color=ft.Colors.GREY_300)))
+            cells = [
+                ft.DataCell(ft.Text(str(val)[:100], size=12, color=ft.Colors.GREY_300))
+                for val in pad(r, ncols)
+            ]
             table_rows.append(ft.DataRow(cells=cells))
 
         return ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Text(f"Tabella ({len(rows)} righe x {len(headers)} colonne)", size=13, color=ft.Colors.GREY_400),
+                    ft.Text(f"Tabella ({len(rows)} righe x {ncols} colonne)", size=13, color=ft.Colors.GREY_400),
                     ft.Divider(height=8, color=ft.Colors.TRANSPARENT),
                     ft.Container(
                         content=ft.DataTable(
-                            columns=[ft.DataColumn(ft.Text(h or f"C{i}", size=12)) for i, h in enumerate(headers)],
+                            columns=[ft.DataColumn(ft.Text(str(h) or f"C{i}", size=12)) for i, h in enumerate(headers)],
                             rows=table_rows,
                             border=ft.border.Border(left=ft.BorderSide(1, ft.Colors.with_opacity(0.1, ft.Colors.WHITE)), right=ft.BorderSide(1, ft.Colors.with_opacity(0.1, ft.Colors.WHITE)), top=ft.BorderSide(1, ft.Colors.with_opacity(0.1, ft.Colors.WHITE)), bottom=ft.BorderSide(1, ft.Colors.with_opacity(0.1, ft.Colors.WHITE))),
                             border_radius=8,
@@ -378,14 +443,46 @@ class ResultsView(ft.Container):
     async def _export(self, fmt: str) -> None:
         path = await self.app.export_result(fmt)
         if path:
-            self._show_snackbar(f"Esportato: {path}")
+            self._reveal_folder(path)
+            self._show_snackbar(f"File {fmt.upper()} salvato in: {path}")
         else:
             self._show_snackbar("Nessun risultato da esportare", ft.Colors.RED_400)
+
+    async def _export_all(self) -> None:
+        paths = await self.app.export_all_results()
+        if paths:
+            folder = self.app.output_dir
+            self._reveal_folder(folder)
+            formats = ", ".join(sorted(p.upper() for p in paths))
+            self._show_snackbar(f"Salvati {formats} nella cartella: {folder}")
+        else:
+            self._show_snackbar("Nessun risultato da esportare", ft.Colors.RED_400)
+
+    def _reveal_folder(self, path: str) -> None:
+        """Apre la cartella che contiene i file esportati nel file manager."""
+        import os
+        import platform
+        import subprocess
+
+        folder = path if os.path.isdir(path) else os.path.dirname(os.path.abspath(path))
+        try:
+            system = platform.system()
+            if system == "Windows":
+                os.startfile(folder)  # type: ignore[attr-defined]
+            elif system == "Darwin":
+                subprocess.Popen(["open", folder])
+            else:
+                subprocess.Popen(["xdg-open", folder])
+        except Exception:
+            # Apertura non riuscita (es. ambiente headless): il percorso resta
+            # comunque mostrato nello snackbar.
+            pass
 
     def _show_snackbar(self, msg: str, color=ft.Colors.GREEN_400) -> None:
         self.page.show_dialog(
             ft.SnackBar(
                 content=ft.Text(msg, size=13, color=color),
                 bgcolor=ft.Colors.with_opacity(0.95, "#1a1d27"),
+                duration=6000,
             )
         )

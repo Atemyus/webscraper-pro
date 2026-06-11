@@ -5,8 +5,10 @@ import logging
 
 import flet as ft
 
+from app import config
 from app.gui.views.home_view import HomeView
 from app.gui.views.results_view import ResultsView
+from app.gui.views.settings_view import SettingsView
 from app.services import ScraperService
 
 logger = logging.getLogger("scraper.gui")
@@ -18,6 +20,7 @@ class ScraperApp:
 
     def __init__(self, page: ft.Page):
         self.page = page
+        config.apply_config()  # imposta SCRAPER_PROXY dalla config salvata
         self.service = ScraperService()
         self._setup_page()
         self._build_ui()
@@ -45,6 +48,7 @@ class ScraperApp:
 
         self.home_view = HomeView(self)
         self.results_view = ResultsView(self)
+        self.settings_view = SettingsView(self)
 
         self.content = ft.AnimatedSwitcher(
             content=self.home_view,
@@ -156,6 +160,7 @@ class ScraperApp:
         views = {
             "home": self.home_view,
             "results": self.results_view,
+            "settings": self.settings_view,
         }
         new_content = views.get(view, self.home_view)
         if new_content != self.content.content:
@@ -175,13 +180,20 @@ class ScraperApp:
             keywords_text = (filters or {}).get("keywords", "")
             keywords = [k.strip() for k in keywords_text.split(",") if k.strip()] if keywords_text else None
 
+            def on_progress(done: int, total: int, msg: str) -> None:
+                pct = f" ({done}/{total})" if total else ""
+                self.home_view.show_progress(f"{msg}{pct}")
+
+            # Lo screenshot non ha senso in modalità crawl (nessuna pagina singola).
+            is_crawl = bool((filters or {}).get("crawl_all"))
             result = await self.service.scrape(
                 url=url,
                 keywords=keywords,
                 category=category,
                 filters=filters,
                 headless=True,
-                screenshot=True,
+                screenshot=not is_crawl,
+                progress_cb=on_progress if is_crawl else None,
             )
             # Monta prima la results view nella pagina, poi popolala: in caso
             # contrario display_result chiamerebbe .update() su un controllo
@@ -201,3 +213,14 @@ class ScraperApp:
             return None
         name = self.results_view.current_name or "scrape_result"
         return await self.service.export(result, name, fmt)
+
+    async def export_all_results(self) -> dict[str, str] | None:
+        result = self.results_view.current_result
+        if result is None:
+            return None
+        name = self.results_view.current_name or "scrape_result"
+        return await self.service.export_all(result, name)
+
+    @property
+    def output_dir(self) -> str:
+        return self.service.output_dir

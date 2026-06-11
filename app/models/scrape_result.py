@@ -31,6 +31,7 @@ class ScrapeResult:
     items: list[ScrapedItem] = field(default_factory=list)
     screenshots: list[str] = field(default_factory=list)
     error: Optional[str] = None
+    notice: Optional[str] = None
 
     @property
     def texts(self) -> list[ScrapedItem]:
@@ -56,4 +57,5 @@ class ScrapeResult:
             "metadata": self.metadata,
             "items": [i.to_dict() for i in self.items],
             "error": self.error,
+            "notice": self.notice,
         }
