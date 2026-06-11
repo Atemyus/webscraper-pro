@@ -347,35 +347,46 @@ class ResultsView(ft.Container):
 
     def _build_table_card(self, item) -> ft.Container:
         data = item.content
-        headers = data.get("headers", [])
-        rows = data.get("rows", [])
+        headers = list(data.get("headers", []) or [])
+        rows = data.get("rows", []) or []
 
-        if not headers and rows:
-            headers = [f"Col {i+1}" for i in range(len(rows[0]))]
+        # Numero di colonne: il massimo fra header e righe. Le tabelle reali
+        # hanno spesso righe di lunghezza diversa (colspan/rowspan): per evitare
+        # il crash del DataTable di Flet ("DataRow deve avere tante celle quante
+        # le colonne") normalizziamo TUTTE le righe e gli header a ncols.
+        ncols = len(headers)
+        for r in rows:
+            ncols = max(ncols, len(r))
+        if ncols == 0:
+            return ft.Container(
+                content=ft.Text("Tabella vuota", size=12, color=ft.Colors.GREY_500),
+                padding=16,
+            )
+        if len(headers) < ncols:
+            headers = headers + [f"Col {i+1}" for i in range(len(headers), ncols)]
+        else:
+            headers = headers[:ncols]
+
+        def pad(seq, n):
+            seq = list(seq)[:n]
+            return seq + [""] * (n - len(seq))
 
         table_rows = []
-        if headers:
-            table_rows.append(
-                ft.DataRow(
-                    cells=[ft.DataCell(ft.Text(h, weight=ft.FontWeight.BOLD, size=12, color=ft.Colors.INDIGO_300)) for h in headers],
-                    color=ft.Colors.with_opacity(0.05, ft.Colors.INDIGO_200),
-                )
-            )
-
         for r in rows[:50]:
-            cells = []
-            for ci, val in enumerate(r):
-                cells.append(ft.DataCell(ft.Text(str(val)[:100], size=12, color=ft.Colors.GREY_300)))
+            cells = [
+                ft.DataCell(ft.Text(str(val)[:100], size=12, color=ft.Colors.GREY_300))
+                for val in pad(r, ncols)
+            ]
             table_rows.append(ft.DataRow(cells=cells))
 
         return ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Text(f"Tabella ({len(rows)} righe x {len(headers)} colonne)", size=13, color=ft.Colors.GREY_400),
+                    ft.Text(f"Tabella ({len(rows)} righe x {ncols} colonne)", size=13, color=ft.Colors.GREY_400),
                     ft.Divider(height=8, color=ft.Colors.TRANSPARENT),
                     ft.Container(
                         content=ft.DataTable(
-                            columns=[ft.DataColumn(ft.Text(h or f"C{i}", size=12)) for i, h in enumerate(headers)],
+                            columns=[ft.DataColumn(ft.Text(str(h) or f"C{i}", size=12)) for i, h in enumerate(headers)],
                             rows=table_rows,
                             border=ft.border.Border(left=ft.BorderSide(1, ft.Colors.with_opacity(0.1, ft.Colors.WHITE)), right=ft.BorderSide(1, ft.Colors.with_opacity(0.1, ft.Colors.WHITE)), top=ft.BorderSide(1, ft.Colors.with_opacity(0.1, ft.Colors.WHITE)), bottom=ft.BorderSide(1, ft.Colors.with_opacity(0.1, ft.Colors.WHITE))),
                             border_radius=8,

@@ -7,7 +7,7 @@ from typing import Optional
 from urllib.parse import urlparse
 
 from app.engine import BrowserManager, ContentExtractor, PageInteractor
-from app.engine.adapters import GenericAdapter
+from app.engine.adapters import GenericAdapter, STATS_ADAPTERS
 from app.engine.adapters.base_adapter import BaseAdapter
 from app.filters import apply_category_filters
 from app.models.scrape_result import ScrapeResult
@@ -21,7 +21,9 @@ class ScraperService:
         self.browser = BrowserManager()
         self.adapter = GenericAdapter()
         self.exporter = Exporter()
-        self._adapters: list[BaseAdapter] = [GenericAdapter()]
+        # Adapter dedicati (siti di statistiche) prima del generico: vengono
+        # scelti per dominio da _select_adapter; il generico è il fallback.
+        self._adapters: list[BaseAdapter] = [*STATS_ADAPTERS, GenericAdapter()]
         self._current_page = None
 
     def register_adapter(self, adapter: BaseAdapter) -> None:
@@ -85,11 +87,16 @@ class ScraperService:
             # che ogni filtro "cozzi" davvero con i dati estratti.
             result = await adapter.scrape(page, url, None)
             raw_count = len(result.items)
+            challenge_blob = (result.title or "") + " " + " ".join(
+                str(i.content) for i in result.items[:8]
+            )
             result = apply_category_filters(result, category, filters, keywords)
 
             # Avviso utile quando un sito restituisce pochi dati (tipicamente
             # social/pagine dietro login o contenuti caricati solo dopo l'accesso).
-            result.notice = self._build_notice(url, final_url, category, raw_count)
+            result.notice = self._build_notice(
+                url, final_url, category, raw_count, challenge_blob
+            )
 
             if screenshot:
                 ss_path = await self.browser.screenshot(page)
@@ -120,13 +127,40 @@ class ScraperService:
 
     # Domini social che, da non loggati, mostrano quasi sempre solo i dati pubblici.
     _SOCIAL_DOMAINS = ("instagram", "facebook", "twitter", "x.com", "tiktok", "linkedin", "threads")
+    # Siti di statistiche protetti da Cloudflare / resi via JavaScript.
+    _STATS_DOMAINS = ("soccerstats", "footystats", "sofascore")
+
+    _CHALLENGE_MARKERS = (
+        "just a moment", "checking your browser", "verifica di sicurezza",
+        "verifica riuscita", "verifying you are human", "enable javascript and cookies",
+        "controllo del browser", "needs to review the security",
+    )
 
     def _build_notice(
-        self, url: str, final_url: str, category: str | None, raw_count: int
+        self, url: str, final_url: str, category: str | None,
+        raw_count: int, challenge_blob: str = "",
     ) -> str | None:
         domain = urlparse(final_url or url).netloc.lower()
         is_social = any(d in domain for d in self._SOCIAL_DOMAINS)
+        is_stats = any(d in domain for d in self._STATS_DOMAINS)
         looks_login = any(k in (final_url or "").lower() for k in ("login", "signin", "accedi", "/auth", "authwall"))
+        challenged = any(m in challenge_blob.lower() for m in self._CHALLENGE_MARKERS)
+
+        if challenged:
+            return (
+                "Il sito è protetto da Cloudflare e ha mostrato una verifica anti-bot "
+                "che il browser automatico non è riuscito a superare. Riprova (a volte "
+                "passa al secondo tentativo) oppure apri prima il sito manualmente. "
+                "I siti con verifica interattiva non sono sempre estraibili in automatico."
+            )
+
+        if is_stats and raw_count == 0:
+            return (
+                "Il sito di statistiche non ha restituito dati: probabilmente Cloudflare "
+                "ha bloccato la richiesta o i contenuti non si sono caricati in tempo. "
+                "Riprova (il challenge spesso passa al secondo tentativo) o usa l'URL di una "
+                "pagina specifica (es. classifica del campionato)."
+            )
 
         if is_social and raw_count == 0:
             return (
