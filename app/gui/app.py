@@ -5,8 +5,10 @@ import logging
 
 import flet as ft
 
+from app import config
 from app.gui.views.home_view import HomeView
 from app.gui.views.results_view import ResultsView
+from app.gui.views.settings_view import SettingsView
 from app.services import ScraperService
 
 logger = logging.getLogger("scraper.gui")
@@ -18,6 +20,7 @@ class ScraperApp:
 
     def __init__(self, page: ft.Page):
         self.page = page
+        config.apply_config()  # imposta SCRAPER_PROXY dalla config salvata
         self.service = ScraperService()
         self._setup_page()
         self._build_ui()
@@ -45,6 +48,7 @@ class ScraperApp:
 
         self.home_view = HomeView(self)
         self.results_view = ResultsView(self)
+        self.settings_view = SettingsView(self)
 
         self.content = ft.AnimatedSwitcher(
             content=self.home_view,
@@ -156,6 +160,7 @@ class ScraperApp:
         views = {
             "home": self.home_view,
             "results": self.results_view,
+            "settings": self.settings_view,
         }
         new_content = views.get(view, self.home_view)
         if new_content != self.content.content:
